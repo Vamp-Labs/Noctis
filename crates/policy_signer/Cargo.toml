@@ -1,0 +1,11 @@
+[package]
+name = "policy_signer"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+
+[dependencies]
+soroban-sdk = { workspace = true }
+
+[lib]
+crate-type = ["cdylib"]

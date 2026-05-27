@@ -1,0 +1,25 @@
+[workspace]
+members = [
+    "crates/payroll_dispatcher",
+    "crates/streaming_vault",
+    "crates/wallet_factory",
+    "crates/yield_router",
+    "crates/policy_signer",
+]
+resolver = "2"
+
+[workspace.package]
+edition = "2021"
+version = "0.1.0"
+authors = ["Noctis Team"]
+
+# Workspace-level profiles
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+strip = true
+
+# Shared dependencies for all contracts
+[workspace.dependencies]
+soroban-sdk = "26.0.0"

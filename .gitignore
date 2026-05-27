@@ -1,0 +1,26 @@
+# Rust
+/target/
+**/*.rs.bk
+Cargo.lock
+*.pdb
+
+# IDEs
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Build artifacts
+*.so
+*.wasm
+*.dylib
+
+# Test outputs
+test-output/
+coverage/
+
+# Local configuration
+.env
+.env.local

@@ -1,0 +1,11 @@
+[package]
+name = "yield_router"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+
+[dependencies]
+soroban-sdk = { workspace = true }
+
+[lib]
+crate-type = ["cdylib"]

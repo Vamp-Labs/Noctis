@@ -19,7 +19,8 @@ opt-level = "z"
 lto = true
 codegen-units = 1
 strip = true
+overflow-checks = true
 
 # Shared dependencies for all contracts
 [workspace.dependencies]
-soroban-sdk = "26.0.0"
+soroban-sdk = { version = "26.0.0" }

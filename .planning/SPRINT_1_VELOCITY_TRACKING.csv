@@ -1,0 +1,18 @@
+Task,Owner,Points,Status,Day1_Pct,Day4_Pct,Day7_Pct,Day10_Pct,Deadline,Blocker_For,Notes
+RES-002: ZK Circuit Design,Web3 Researcher,13,ACTIVE,20%,50%,100%,100%,"Jun 7 (Day 7)","DEV-004, DEV-007, M1–M2",CRITICAL PATH — ZK circuit spec must be complete by Day 7 or entire sprint at risk
+DEV-001: Testnet Environment Setup,Backend Engineer,5,ACTIVE,30%,100%,100%,100%,"May 28 (Day 2)","DEV-002, DEV-003, DEV-004, DEV-005, DEV-006, DEV-007","P0 BLOCKER — if testnet RPC or Friendbot down past Day 2 EOD, escalate immediately. Local fallback: Soroland sandbox."
+DEV-008: Smart Contract Skeleton,Smart Contract Engineer,5,ACTIVE,20%,100%,100%,100%,"May 30 (Day 4)","DEV-002, DEV-003, DEV-004, DEV-005, DEV-006, DEV-007","M1 milestone requires all 5 contracts compiling. CI pipeline must be green."
+DEV-002: Streaming Payment Contract,Smart Contract Engineer,4,QUEUED,0%,10%,30%,80%,"Jun 8 (Day 10)","M2, DEV-009","Soft start Day 1 (design), hard start Day 8 (after RES-002). Core streaming logic: accrual, withdrawal, cancellation."
+DEV-003: Smart Wallet Factory (CAP-0051),Smart Contract Engineer,3,QUEUED,0%,5%,25%,70%,"Jun 8 (Day 10)","M2, DEV-004","Soft start Day 1, hard start Day 8. secp256r1 signer + passkey integration. Target: <3s deployment."
+RES-001: Protocol 26 Impact Assessment,Web3 Researcher,5,QUEUED,0%,0%,0%,50%,"Jun 12 (Day 12)","DEV-005, M3","Starts Day 8 (after RES-002). Network analysis, validator analysis, MEV implications."
+RES-003: Stellar RPC Migration,Web3 Researcher,2,QUEUED,0%,0%,0%,50%,"Jun 12 (Day 12)","DEV-006, M3","Starts Day 8. Testnet RPC failover, rate-limit strategy, latency optimization."
+RES-004: SEP Compliance Audit,Web3 Researcher,1,QUEUED,0%,0%,0%,50%,"Jun 12 (Day 12)","DEV-010, M4","Starts Day 8. SEP-0010/0024/0031 regulatory framework."
+DEV-004: ZK Dispatcher Contract,Smart Contract Engineer,0,QUEUED,0%,0%,0%,0%,"Jun 12 (Day 12)","DEV-007, M2–M3","Sprint 2. Depends on RES-002 handoff (Day 7). Proof generation <5s target."
+DEV-005: Yield Routing Logic,Smart Contract Engineer,0,QUEUED,0%,0%,0%,0%,"Jun 15 (Day 15)","DEV-006, M3","Sprint 2. Depends on RES-001 (Protocol 26 rates). Soroswap + Blend integration."
+DEV-006: Lending Integration (Blend),Smart Contract Engineer,0,QUEUED,0%,0%,0%,0%,"Jun 15 (Day 15)","DEV-005, M3","Sprint 2. Depends on RES-003 (RPC stability) + Blend testnet status."
+DEV-007: Proof Verification & Integration,Smart Contract Engineer,0,QUEUED,0%,0%,0%,0%,"Jun 12 (Day 12)","DEV-004, M2","Sprint 2. Depends on RES-002 (ZK spec). Groth16 verification in Soroban."
+DEV-009: Passkey Registration (Passkey Kit),Frontend Engineer,0,QUEUED,0%,0%,0%,0%,"Jun 19 (Day 19)","M3–M4","Sprint 2–3. Depends on RES-009 (Passkey Kit SDK maturity). <3s registration target. Risk: SDK unavailable → mock for M2, real Sprint 2."
+DEV-010: Employee Portal UI,Frontend Engineer,0,QUEUED,0%,0%,0%,0%,"Jun 22 (Day 22)","M5","Sprint 3. Payroll stream dashboard, withdrawal UI, earnings tracker."
+DEV-011: Employer Dashboard UI,Frontend Engineer,0,QUEUED,0%,0%,0%,0%,"Jun 25 (Day 25)","M6","Sprint 3–4. Batch upload, employee management, yield reporting."
+DEV-012: API Layer (Indexing & Queries),Backend Engineer,0,QUEUED,0%,0%,0%,0%,"Jun 19 (Day 19)","M5–M6","Sprint 2–3. Depends on DEV-001 (testnet stability). Subgraph + REST API."
+DEV-013: Demo Day Integration & Docs,Backend Engineer,0,QUEUED,0%,0%,0%,0%,"Jun 26 (Day 26)","M10","Sprint 4. Final bug fixes, performance optimization, deployment docs."

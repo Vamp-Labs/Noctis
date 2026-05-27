@@ -1,0 +1,16 @@
+Task,Owner,Points,Status,Depends_On,Priority,Week_Target,Notes
+DEV-004: ZK Dispatcher Contract,Smart Contract Engineer,8,ACTIVE,RES-002 ✅ (Handoff Jun 7),CRITICAL,50% by Jun 18 (M3) / 100% by Jun 22 (M4),Must start Day 1. 3-day buffer before DEV-007.
+DEV-005: Yield Routing Logic,Smart Contract Engineer,5,QUEUED,RES-001 (start Jun 12),CRITICAL,100% by Jun 18 (M3),Start after DEV-004 50% (approx Jun 14). Soroswap + Blend.
+DEV-006: Blend Lending Integration,Smart Contract Engineer,5,QUEUED,RES-003 (start Jun 12),CRITICAL,100% by Jun 18 (M3),Start after DEV-004 50% (approx Jun 14). Depends on RES-003.
+DEV-007: Proof Verification & Integration,Smart Contract Engineer,5,QUEUED,DEV-004 75%+ (approx Jun 18),CRITICAL,100% by Jun 22 (M4),Slot 2 week. Depends on DEV-004 core complete.
+DEV-009: Passkey Registration UI (cont.),Frontend Engineer,5,ACTIVE,DEV-003 ✅ (Sprint 1),MEDIUM,100% by Jun 18 (M3),60% inherited from Sprint 1. Real SDK v2.1.
+DEV-010: Employee Portal UI (cont.),Frontend Engineer,5,ACTIVE,DEV-003 ✅ (Sprint 1),MEDIUM,70% by Jun 22 (M5),40% inherited from Sprint 1. Dashboard + withdrawal.
+DEV-012: API Layer (cont.),Backend Engineer,1,ACTIVE,Sprint 1,LOW,100% by Jun 14,Wrap up 10th endpoint. Subgraph finalize.
+DEV-013: Demo Day Integration & Docs,All,3,QUEUED,All Sprint 2 tasks,MEDIUM,100% by Jun 25,Start Jun 20. Script + docs + testing.
+RES-003: Stellar RPC Migration (cont.),Web3 Researcher,1,ACTIVE,Started Jun 8,MEDIUM,100% by Jun 13,40% inherited from Sprint 1. Complete this week.
+RES-001: Protocol 26 Impact Analysis,Web3 Researcher,5,QUEUED,RES-003 100%,MEDIUM,100% by Jun 22,Start after RES-003 (approx Jun 13). Network analysis.
+RES-004: SEP Compliance Audit,Web3 Researcher,1,QUEUED,RES-001 100%,LOW,100% by Jun 25,Last research task. SEP-0010/0024/0031.
+M3: Yield + Lending Milestone,All,0,MILESTONE,DEV-005 + DEV-006 100%,CRITICAL,Jun 18,Exit: yield routing + Blend deployed on testnet.
+M4: Proof + ZK Milestone,All,0,MILESTONE,DEV-004 + DEV-007 100%,CRITICAL,Jun 22,Exit: Groth16 verification working + ZK batch processing.
+M5: UI Complete Milestone,All,0,MILESTONE,DEV-009 100% + DEV-010 70%,MEDIUM,Jun 22,Exit: Passkey registration + employee portal functional.
+Demo Day Readiness,All,0,QUEUED,All M3-M5 milestones,HIGH,Jun 26-30,Full testnet MVP ready for demo. Script + rehearsal.

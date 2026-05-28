@@ -1,4 +1,6 @@
 # Noctis: Privacy-First Global Payroll on Stellar
+<img width="1254" height="1254" alt="Noctis" src="https://github.com/user-attachments/assets/242845a3-a90b-4f7c-9a3d-13e535e54a2d" />
+
 
 Welcome to the Noctis smart contract repository. This is the core infrastructure for the Stellar Testnet MVP of Noctis — a privacy-first, enterprise-grade payroll platform.
 

@@ -1,0 +1,84 @@
+# ────────────────────────────────────────────────────────────────────────────
+# Noctis Deploy Pipeline — triggered by deploy-v* tag pushes
+# Builds WASM, deploys all 5 contracts to testnet, and configures them.
+# ────────────────────────────────────────────────────────────────────────────
+name: Deploy Testnet
+
+on:
+  push:
+    tags:
+      - deploy-v*
+
+concurrency:
+  group: deploy-testnet-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  deploy-testnet:
+    name: Deploy Contracts to Testnet
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # ── Step 1: Install Rust & Build WASM ────────────────────────────────
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Cache cargo dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-deploy-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-deploy-
+
+      - name: Build WASM contracts (release)
+        run: stellar contract build
+
+      # ── Step 2: Setup Stellar CLI with deployer identity ─────────────────
+      - name: Setup Stellar CLI
+        run: |
+          echo "${{ secrets.PASSKEYGATE_DEPLOYER_SECRET }}" | stellar keys add passkeygate-deployer --secret-stdin
+          echo "${{ secrets.LOCAL_DEPLOYER_SECRET }}" | stellar keys add local-deployer --secret-stdin
+
+      - name: Configure Stellar network
+        run: |
+          stellar network add testnet \
+            --rpc-url "${{ secrets.TESTNET_RPC_URL }}" \
+            --network-passphrase "Test SDF Network ; September 2015"
+
+      # ── Step 3: Deploy and configure contracts ──────────────────────────
+      - name: Deploy & configure contracts
+        run: npx tsx scripts/deploy-and-configure.ts
+        env:
+          STELLAR_NETWORK: TESTNET
+          TESTNET_RPC_URL: ${{ secrets.TESTNET_RPC_URL }}
+          PASSKEYGATE_DEPLOYER_SECRET: ${{ secrets.PASSKEYGATE_DEPLOYER_SECRET }}
+          LOCAL_DEPLOYER_SECRET: ${{ secrets.LOCAL_DEPLOYER_SECRET }}
+          FRIENDBOT_URL: https://friendbot.stellar.org/
+
+      # ── Step 4: Save contract addresses as artifact ──────────────────────
+      - name: Upload deployment artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: contract-addresses-${{ github.ref_name }}
+          path: .env.testnet
+          retention-days: 90
+
+      # ── Step 5: Commit updated .env.testnet back to repo ─────────────────
+      - name: Commit updated .env.testnet
+        run: |
+          git config user.name "noctis-bot"
+          git config user.email "bot@noctis.app"
+          git add .env.testnet
+          if git diff --cached --quiet; then
+            echo "No changes to .env.testnet — skipping commit"
+          else
+            git commit -m "chore: update testnet contract addresses [skip ci]"
+            git push
+          fi

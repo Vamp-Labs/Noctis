@@ -74,4 +74,36 @@ export class YieldRouterClient extends ContractClient {
       return "0";
     }
   }
+
+  // ─── Write Operations ───────────────────────────────────────────
+
+  /** Deposit idle funds for yield routing */
+  async depositIdle(
+    sourceAddress: string,
+    employer: string,
+    token: string,
+    amount: string,
+  ): Promise<void> {
+    await this.writeWithFreighter(
+      sourceAddress,
+      "route_yield",
+      addressToScVal(employer),
+      addressToScVal(token),
+      i128ToScVal(amount),
+    );
+  }
+
+  /** Withdraw accumulated yield */
+  async withdrawYield(
+    sourceAddress: string,
+    employer: string,
+    token: string,
+  ): Promise<void> {
+    await this.writeWithFreighter(
+      sourceAddress,
+      "withdraw_yield",
+      addressToScVal(employer),
+      addressToScVal(token),
+    );
+  }
 }

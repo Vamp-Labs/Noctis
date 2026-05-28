@@ -39,16 +39,18 @@ echo "  ✅ R1CS, WASM, SYM generated in ${BUILD_DIR}"
 # ─── Step 2: Display circuit stats ───────────────────────────────
 echo ""
 echo "📊 Step 2/5: Circuit statistics..."
+export NODE_OPTIONS="--max-old-space-size=8192"
 snarkjs r1cs info "${BUILD_DIR}/payroll_circuit.r1cs"
-snarkjs r1cs print "${BUILD_DIR}/payroll_circuit.r1cs" "${BUILD_DIR}/payroll_circuit.sym" | head -20
+echo "  (Skipping r1cs print — too large for available memory)"
 
 # ─── Step 3: Powers of Tau Ceremony (2^20) ───────────────────────
 echo ""
 echo "🔑 Step 3/5: Powers of Tau ceremony (2^20 = ~1M constraints)..."
-snarkjs powersoftau new bls12381 20 "${BUILD_DIR}/payroll_pTau_20_0000.ptau" -v
+snarkjs powersoftau new bn128 20 "${BUILD_DIR}/payroll_pTau_20_0000.ptau" -v
 snarkjs powersoftau contribute "${BUILD_DIR}/payroll_pTau_20_0000.ptau" \
                               "${BUILD_DIR}/payroll_pTau_20_0001.ptau" \
-                              --name="Noctis Hackathon" -v
+                              --name="Noctis Hackathon" -v \
+                              -e="noctis-payroll-zk-hackathon-2026"
 snarkjs powersoftau verify "${BUILD_DIR}/payroll_pTau_20_0001.ptau"
 snarkjs powersoftau beacon "${BUILD_DIR}/payroll_pTau_20_0001.ptau" \
                           "${BUILD_DIR}/payroll_pTau_20_beacon.ptau" \
@@ -56,17 +58,23 @@ snarkjs powersoftau beacon "${BUILD_DIR}/payroll_pTau_20_0001.ptau" \
                           10 -v
 echo "  ✅ Powers of Tau complete: ${BUILD_DIR}/payroll_pTau_20_beacon.ptau"
 
-# ─── Step 4: Generate Proving Key ────────────────────────────────
+# ─── Step 4: Prepare Phase 2 ────────────────────────────────────
 echo ""
-echo "🔐 Step 4/5: Generating proving key (this takes a while)..."
+echo "🔐 Step 4/6: Preparing phase 2..."
+snarkjs powersoftau prepare phase2 "${BUILD_DIR}/payroll_pTau_20_beacon.ptau" \
+                                  "${BUILD_DIR}/payroll_pTau_20_phase2.ptau" -v
+
+# ─── Step 5: Generate Proving Key ────────────────────────────────
+echo ""
+echo "🔐 Step 5/6: Generating proving key (this takes a while)..."
 snarkjs groth16 setup "${BUILD_DIR}/payroll_circuit.r1cs" \
-                     "${BUILD_DIR}/payroll_pTau_20_beacon.ptau" \
-                     "${BUILD_DIR}/payroll_circuit.zkey"
+                      "${BUILD_DIR}/payroll_pTau_20_phase2.ptau" \
+                      "${BUILD_DIR}/payroll_circuit.zkey"
 echo "  ✅ Proving key: ${BUILD_DIR}/payroll_circuit.zkey"
 
-# ─── Step 5: Export Verification Key ─────────────────────────────
+# ─── Step 6: Export Verification Key ─────────────────────────────
 echo ""
-echo "📝 Step 5/5: Exporting verification key..."
+echo "📝 Step 6/6: Exporting verification key..."
 snarkjs zkey export verificationkey "${BUILD_DIR}/payroll_circuit.zkey" \
                                    "${BUILD_DIR}/payroll_circuit.vkey.json"
 echo "  ✅ Verification key: ${BUILD_DIR}/payroll_circuit.vkey.json"

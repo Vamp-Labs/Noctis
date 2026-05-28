@@ -1,0 +1,17 @@
+{
+  "name": "noctis-scripts",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "health-check": "npx tsx health-check.ts",
+    "deploy": "npx tsx deploy-and-configure.ts"
+  },
+  "dependencies": {
+    "@stellar/stellar-sdk": "^15.1.0"
+  },
+  "devDependencies": {
+    "tsx": "^4.19.0",
+    "typescript": "^5.5.0"
+  }
+}

@@ -41,53 +41,85 @@ export interface ProofResult {
     curve: string;
   };
   publicSignals: string[];
-  /** Serialize proof to 192 bytes for Soroban */
+  /** Serialize proof to 384 bytes for Soroban (G1/G2 uncompressed) */
   toBytes(): Uint8Array;
 }
 
-// ─── Poseidon Hash (Simplified for Client) ──────────────────────
-// For MVP: uses a simple SHA-256 Merkle tree.
-// Production: use Poseidon via circomlibjs.
-// The circuit uses Poseidon; this client-side implementation must
-// produce the same Merkle roots as the circuit.
+// ─── Poseidon Hash Helpers ────────────────────────────────────────
+let _poseidon: any = null;
 
-// ─── Merkle Tree Builder ─────────────────────────────────────────
+async function getPoseidon(): Promise<any> {
+  if (_poseidon) return _poseidon;
+  // @ts-expect-error - circomlibjs has no TS types
+  const { buildPoseidon } = await import("circomlibjs");
+  _poseidon = await buildPoseidon();
+  return _poseidon;
+}
 
-/**
- * Compute a SHA-256 hash of two 32-byte buffers concatenated.
- * Used as the internal node hash function.
- */
-function hashPair(left: Uint8Array, right: Uint8Array): Uint8Array {
-  const combined = new Uint8Array(64);
-  combined.set(left);
-  combined.set(right, 32);
+function bytesToBigInt(bytes: Uint8Array): bigint {
+  let result = 0n;
+  for (let i = 0; i < bytes.length; i++) {
+    result = (result << 8n) + BigInt(bytes[i]);
+  }
+  return result;
+}
 
-  // Use SubtleCrypto for SHA-256
-  // For production: use Poseidon via circomlibjs (must match circuit)
-  const hashBuffer = crypto.subtle
-    ? null
-    : null; // Fallback: sync hash for Node/Edge
+function fieldToBytes(value: bigint | number): Uint8Array {
+  const hex = value.toString(16).padStart(64, "0");
+  const bytes = new Uint8Array(32);
+  for (let i = 0; i < 32; i++) {
+    bytes[i] = parseInt(hex.substring(i * 2, i * 2 + 2), 16);
+  }
+  return bytes;
+}
 
-  // Synchronous SHA-256 using Web Crypto API
-  // Note: For large trees, use async in production
-  throw new Error("SHA-256 Merkle tree requires async SubtleCrypto in browser");
+export function hexToBytes(hex: string): Uint8Array {
+  const clean = hex.startsWith("0x") ? hex.slice(2) : hex;
+  const bytes = new Uint8Array(clean.length / 2);
+  for (let i = 0; i < bytes.length; i++) {
+    bytes[i] = parseInt(clean.substring(i * 2, i * 2 + 2), 16);
+  }
+  return bytes;
+}
+
+function bigintToBytes48(value: string): Uint8Array {
+  const hex = BigInt(value).toString(16).padStart(96, "0");
+  const bytes = new Uint8Array(48);
+  for (let i = 0; i < 48; i++) {
+    bytes[i] = parseInt(hex.substring(i * 2, i * 2 + 2), 16);
+  }
+  return bytes;
+}
+
+function serializeG1(x: string, y: string): Uint8Array {
+  const buf = new Uint8Array(96);
+  buf.set(bigintToBytes48(x), 0);
+  buf.set(bigintToBytes48(y), 48);
+  return buf;
+}
+
+function serializeG2(
+  x_a: string, x_b: string,
+  y_a: string, y_b: string,
+): Uint8Array {
+  const buf = new Uint8Array(192);
+  buf.set(bigintToBytes48(x_a), 0);
+  buf.set(bigintToBytes48(x_b), 48);
+  buf.set(bigintToBytes48(y_a), 96);
+  buf.set(bigintToBytes48(y_b), 144);
+  return buf;
 }
 
 /**
  * Build a Merkle tree from payment list and generate proofs.
- *
- * For MVP: uses Poseidon-compatible hashing.
- * For full implementation: use circomlibjs Poseidon hash.
+ * Uses Poseidon hash to match the Circom circuit.
  */
 export async function buildMerkleTree(
   recipients: PayrollRecipient[],
   employerAddress: string,
   treeDepth: number = 20
 ): Promise<MerkleTreeResult> {
-  // ─── Step 1: Create leaf hashes ────────────────────
-  // Leaf = Hash(recipient_address || amount || duration)
-  // For MVP: use SHA-256. Production: use Poseidon.
-
+  const poseidon = await getPoseidon();
   const encoder = new TextEncoder();
 
   async function hashLeaf(
@@ -96,8 +128,8 @@ export async function buildMerkleTree(
     duration: number
   ): Promise<Uint8Array> {
     const data = encoder.encode(`${address}:${amount}:${duration}`);
-    const hashBuffer = await crypto.subtle.digest("SHA-256", data);
-    return new Uint8Array(hashBuffer);
+    const hash = poseidon([bytesToBigInt(data)]);
+    return fieldToBytes(poseidon.F.toObject(hash));
   }
 
   const leaves: Uint8Array[] = [];
@@ -124,11 +156,8 @@ export async function buildMerkleTree(
       const left = currentLevel[i];
       const right = currentLevel[i + 1] || left; // Duplicate if odd
 
-      const combined = new Uint8Array(64);
-      combined.set(left);
-      combined.set(right, 32);
-      const parent = new Uint8Array(
-        await crypto.subtle.digest("SHA-256", combined)
+      const parent = fieldToBytes(
+        poseidon.F.toObject(poseidon([bytesToBigInt(left), bytesToBigInt(right)]))
       );
       nextLevel.push(parent);
     }
@@ -187,23 +216,19 @@ export async function buildMerkleTree(
  * Compute a nullifier hash for a payment.
  *
  * nullifier = Poseidon(employer_address || batch_root || payment_index)
- *
- * For MVP: uses SHA-256. Production: use Poseidon via circomlibjs.
  */
 export async function computeNullifier(
   employerAddress: string,
   batchRoot: string,
   paymentIndex: number
 ): Promise<string> {
+  const poseidon = await getPoseidon();
   const encoder = new TextEncoder();
   const data = encoder.encode(
     `${employerAddress}:${batchRoot}:${paymentIndex}`
   );
-  const hashBuffer = await crypto.subtle.digest("SHA-256", data);
-  const hashArray = Array.from(new Uint8Array(hashBuffer));
-  const hashHex = hashArray
-    .map((b) => b.toString(16).padStart(2, "0"))
-    .join("");
+  const hash = poseidon([bytesToBigInt(data)]);
+  const hashHex = poseidon.F.toObject(hash).toString(16).padStart(64, "0");
   return "0x" + hashHex;
 }
 
@@ -283,11 +308,17 @@ export async function generateProof(
     witness
   );
 
-  // Helper to serialize proof to 192 bytes for Soroban
+  // Serialize proof to 384 bytes: G1(96) + G2(192) + G1(96)
   const toBytes = (): Uint8Array => {
-    // For production: serialize π_A (48), π_B (96), π_C (48) = 192 bytes
-    // For MVP: return empty (will be handled by contract stub)
-    return new Uint8Array(192);
+    const pi_a = proof.pi_a;
+    const pi_b = proof.pi_b;
+    const pi_c = proof.pi_c;
+
+    const buf = new Uint8Array(384);
+    buf.set(serializeG1(pi_a[0], pi_a[1]), 0);
+    buf.set(serializeG2(pi_b[0][0], pi_b[0][1], pi_b[1][0], pi_b[1][1]), 96);
+    buf.set(serializeG1(pi_c[0], pi_c[1]), 288);
+    return buf;
   };
 
   return {
@@ -302,19 +333,19 @@ export async function generateProof(
 /**
  * Generate a mock proof compatible with the contract stub.
  * The contract's verify_zk_proof_internal only checks:
- * - Proof length is 192 bytes
+ * - Proof length is 384 bytes
  * - Commitment root is non-zero
  * - Proof components have correct slice lengths
  */
 function getMockProof(witnessInput: WitnessInput): ProofResult {
-  // Build a 192-byte proof that passes the format checks
-  const proofBytes = new Uint8Array(192);
+  // Build a 384-byte proof that passes the format checks
+  const proofBytes = new Uint8Array(384);
   proofBytes[0] = 0x02; // Valid G1 point hint (non-zero)
-  proofBytes[48] = 0x0a; // Valid G2 point hint
-  proofBytes[144] = 0x02; // Valid G1 point hint
+  proofBytes[96] = 0x0a; // Valid G2 point hint
+  proofBytes[288] = 0x02; // Valid G1 point hint
 
   // Ensure proof is recognized as valid
-  proofBytes[191] = 0x01; // Padding
+  proofBytes[383] = 0x01; // Padding
 
   return {
     proof: {

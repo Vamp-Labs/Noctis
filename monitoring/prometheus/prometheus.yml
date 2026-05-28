@@ -1,0 +1,73 @@
+# ────────────────────────────────────────────────────────────────────────────
+# Noctis Prometheus Configuration
+# ────────────────────────────────────────────────────────────────────────────
+# Scrapes the Noctis health endpoints and the Stellar testnet RPC.
+#
+# References:
+#   - Noctis health: /api/health (Next.js API route)
+#   - Contract health: /api/health/contracts
+#   - Stellar RPC: uses the same RPC used by the health checks
+# ────────────────────────────────────────────────────────────────────────────
+
+global:
+  scrape_interval: 60s
+  evaluation_interval: 60s
+
+  # Attach these labels to any time series or alerts when communicating with
+  # external systems (federation, remote storage, Alertmanager).
+  external_labels:
+    monitor: "noctis-testnet"
+
+# Alertmanager configuration (uncomment when deploying)
+# alerting:
+#   alertmanagers:
+#     - static_configs:
+#         - targets:
+#           - alertmanager:9093
+
+# Load rules once and periodically evaluate them according to the global
+# 'evaluation_interval'.
+rule_files:
+  # - "alerts.yml"
+
+scrape_configs:
+  # ── Noctis Health Endpoint ─────────────────────────────────────────────
+  # Replace the target URL with your deployed Next.js app URL.
+  - job_name: "noctis-health"
+    metrics_path: "/api/health"
+    scheme: https
+    static_configs:
+      - targets:
+          - "noctis.example.com" # TODO: Replace with actual deployment URL
+        labels:
+          app: "noctis"
+          network: "testnet"
+
+  # ── Noctis Contract Health ─────────────────────────────────────────────
+  - job_name: "noctis-contract-health"
+    metrics_path: "/api/health/contracts"
+    scheme: https
+    static_configs:
+      - targets:
+          - "noctis.example.com" # TODO: Replace with actual deployment URL
+        labels:
+          app: "noctis"
+          network: "testnet"
+
+  # ── Stellar Testnet RPC ────────────────────────────────────────────────
+  # Prometheus blackbox exporter can be used here for deeper checks.
+  # For now, this is a placeholder — actual RPC health is checked via the
+  # Next.js health endpoint above.
+  - job_name: "stellar-rpc"
+    metrics_path: "/health"
+    scheme: https
+    static_configs:
+      - targets:
+          - "soroban-testnet.stellar.org"
+        labels:
+          network: "stellar-testnet"
+
+  # ── Prometheus itself ───────────────────────────────────────────────────
+  - job_name: "prometheus"
+    static_configs:
+      - targets: ["localhost:9090"]

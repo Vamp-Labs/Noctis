@@ -1,0 +1,18 @@
+# ────────────────────────────────────────────────────────────────────────────
+# Grafana Dashboard Provisioning
+# ────────────────────────────────────────────────────────────────────────────
+# Grafana will automatically load dashboards from the provider path.
+# Reference: https://grafana.com/docs/grafana/latest/administration/provisioning/#dashboards
+# ────────────────────────────────────────────────────────────────────────────
+
+apiVersion: 1
+
+providers:
+  - name: "Noctis"
+    orgId: 1
+    folder: "Noctis"
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 60
+    options:
+      path: /var/lib/grafana/dashboards

@@ -1,0 +1,95 @@
+# ────────────────────────────────────────────────────────────────────────────
+# Noctis Full Circuit Build — triggered manually or on circuits changes to main
+# ────────────────────────────────────────────────────────────────────────────
+name: Circuits Full Build
+
+on:
+  workflow_dispatch:
+    inputs:
+      circuit:
+        description: "Circuit to build (dev / full)"
+        required: true
+        default: full
+        type: choice
+        options:
+          - full
+          - dev
+  push:
+    branches: [main]
+    paths:
+      - "circuits/**"
+
+concurrency:
+  group: circuits-full-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  circuits-full-build:
+    name: Full Circuit Build (100 recipients)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache ptau artifacts
+        id: cache-ptau
+        uses: actions/cache@v4
+        with:
+          path: |
+            circuits/build/*.ptau
+          key: ${{ runner.os }}-ptau-full-${{ hashFiles('circuits/build.sh') }}
+          restore-keys: |
+            ${{ runner.os }}-ptau-full-
+
+      - name: Install circom v2.2.3
+        run: |
+          wget -q https://github.com/iden3/circom/releases/download/v2.2.3/circom-linux-amd64.tar.gz
+          tar -xzf circom-linux-amd64.tar.gz
+          sudo mv circom /usr/local/bin/
+          rm circom-linux-amd64.tar.gz
+          circom --version
+
+      - name: Install snarkjs
+        run: npm install -g snarkjs
+
+      - name: Install circuit dependencies
+        working-directory: circuits
+        run: npm ci --omit=dev
+
+      - name: Select circuit build script
+        id: select-script
+        run: |
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" && "${{ github.event.inputs.circuit }}" == "dev" ]]; then
+            echo "script=build-dev.sh" >> "$GITHUB_OUTPUT"
+          else
+            echo "script=build.sh" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build circuits
+        working-directory: circuits
+        run: bash ${{ steps.select-script.outputs.script }}
+        env:
+          NODE_OPTIONS: "--max-old-space-size=8192"
+
+      - name: List build output
+        working-directory: circuits/build
+        run: ls -lh
+
+      - name: Upload all circuit artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: circuit-artifacts
+          path: circuits/build/
+          if-no-files-found: error
+
+      - name: Upload WASM to frontend public dir
+        run: |
+          mkdir -p frontend/public/circuits
+          cp circuits/build/*.wasm frontend/public/circuits/
+          cp circuits/build/*.zkey frontend/public/circuits/
+
+      - name: Upload frontend-ready artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-circuit-artifacts
+          path: frontend/public/circuits/
+          if-no-files-found: error

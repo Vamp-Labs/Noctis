@@ -80,6 +80,9 @@ export class ContractClient {
 
   /** Simulate a read-only contract call */
   async simulate<T>(method: string, ...args: xdr.ScVal[]): Promise<T> {
+    if (this.networkPassphrase !== "Test SDF Network ; September 2015") {
+      throw new Error("MAINNET BLOCKED: This application is testnet-only. Set STELLAR_NETWORK=TESTNET.");
+    }
     const tx = await this.buildSimulationTx(method, ...args);
     const result = await server.simulateTransaction(tx);
 
@@ -142,6 +145,9 @@ export class ContractClient {
     method: string,
     ...args: xdr.ScVal[]
   ): Promise<{ hash: string; success: boolean }> {
+    if (this.networkPassphrase !== "Test SDF Network ; September 2015") {
+      throw new Error("MAINNET BLOCKED: This application is testnet-only. Set STELLAR_NETWORK=TESTNET.");
+    }
     // 1. Prepare the transaction
     const account = await getCachedAccount(sourceAddress);
     const tx = this.buildInvocationTx(account, method, ...args);

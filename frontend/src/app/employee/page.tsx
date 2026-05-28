@@ -1,10 +1,11 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { StreamingVaultClient } from "@/lib/contracts/streamingVault";
 import { PayrollDispatcherClient } from "@/lib/contracts/payrollDispatcher";
 import type { StreamData } from "@/types";
+import { useNotifications } from "@/components/NotificationToast";
 
 // ─── Types ───────────────────────────────────────────────────────
 interface StreamWithAccrued {
@@ -54,6 +55,9 @@ export default function EmployeePortal() {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [streams, setStreams] = useState<StreamWithAccrued[]>([]);
+  const { addNotification, NotificationContainer } = useNotifications();
+  const prevStreamCountRef = useRef(0);
+  const isFirstLoadRef = useRef(true);
 
   // Read wallet from session storage on mount
   useEffect(() => {
@@ -117,6 +121,15 @@ export default function EmployeePortal() {
         );
 
         if (!cancelled) {
+          if (!isFirstLoadRef.current && results.length > prevStreamCountRef.current) {
+            addNotification({
+              type: "success",
+              title: "New Stream Created",
+              message: `${results.length - prevStreamCountRef.current} new payment stream(s) detected`,
+            });
+          }
+          isFirstLoadRef.current = false;
+          prevStreamCountRef.current = results.length;
           setStreams(results);
         }
       } catch (err: any) {
@@ -130,8 +143,12 @@ export default function EmployeePortal() {
 
     loadStreams();
 
+    // Poll for new streams every 30 seconds
+    const pollInterval = setInterval(loadStreams, 30000);
+
     return () => {
       cancelled = true;
+      clearInterval(pollInterval);
     };
   }, [walletAddress]);
 
@@ -146,6 +163,12 @@ export default function EmployeePortal() {
         const vaultClient = new StreamingVaultClient();
         await vaultClient.claimStream(address, streamId);
 
+        addNotification({
+          type: "success",
+          title: "Stream Claimed",
+          message: `Stream #${streamId} claimed successfully`,
+        });
+
         // Refresh streams after claiming
         const updatedStreams = await Promise.all(
           streams.map(async (s) => {
@@ -159,9 +182,14 @@ export default function EmployeePortal() {
         setStreams(updatedStreams);
       } catch (err: any) {
         setError(err.message || "Failed to claim");
+        addNotification({
+          type: "error",
+          title: "Claim Failed",
+          message: err.message || "Unable to claim stream",
+        });
       }
     },
-    [streams]
+    [streams, addNotification]
   );
 
   // Claim all — sum up all accrued amounts
@@ -194,10 +222,26 @@ export default function EmployeePortal() {
         })
       );
       setStreams(refreshed);
+
+      addNotification({
+        type: "success",
+        title: "All Streams Claimed",
+        message: `Claimed ${streams.filter(s => Number(s.accrued) > 0).length} stream(s)`,
+      });
     } catch (err: any) {
       setError(err.message || "Failed to claim all");
+      addNotification({
+        type: "error",
+        title: "Claim All Failed",
+        message: err.message || "Unable to claim streams",
+      });
     }
-  }, [streams]);
+  }, [streams, addNotification]);
+
+  // Total salary accrual rate from active (non-refunded, non-paused) streams
+  const totalRatePerSec = streams
+    .filter((s) => !s.stream.refunded && !s.stream.paused)
+    .reduce((sum, s) => sum + Number(s.stream.amount_per_second), 0);
 
   // Navigate back home
   const handleBack = useCallback(() => {
@@ -211,6 +255,7 @@ export default function EmployeePortal() {
 
   return (
     <div className="min-h-screen flex flex-col">
+      <NotificationContainer />
       {/* ─── Header ─────────────────────────────────── */}
       <header className="px-6 py-4 border-b border-surface-lighter flex items-center justify-between">
         <div className="flex items-center gap-3">
@@ -264,11 +309,9 @@ export default function EmployeePortal() {
               )}
             />
             <SummaryCard
-              label="Paused"
-              value={
-                streams.filter((s) => s.stream.paused).length.toString()
-              }
-              accent
+              label="Salary Accruing"
+              value={totalRatePerSec > 0 ? `${formatAmount(totalRatePerSec.toString())}/s` : "—"}
+              accent={totalRatePerSec > 0}
             />
           </div>
         )}

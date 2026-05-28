@@ -6,7 +6,8 @@ import { StreamingVaultClient } from "@/lib/contracts/streamingVault";
 import { PayrollDispatcherClient } from "@/lib/contracts/payrollDispatcher";
 import { YieldRouterClient } from "@/lib/contracts/yieldRouter";
 import { PolicySignerClient } from "@/lib/contracts/policySigner";
-import type { StreamData, PayrollRecipient, PolicyConfig } from "@/types";
+import { processPayrollBatch, hexToBytes } from "@/lib/zk";
+import type { StreamData, PayrollRecipient, PolicyConfig, YieldSplit, EmployerAllocation } from "@/types";
 import Papa from "papaparse";
 
 // ─── Types ───────────────────────────────────────────────────────
@@ -66,9 +67,31 @@ export default function EmployerDashboard() {
   // Batch history
   const [recentBatches, setRecentBatches] = useState<number[]>([]);
 
+  // Yield
+  const [yieldSources, setYieldSources] = useState<string[]>([]);
+  const [yieldRates, setYieldRates] = useState<Record<string, number>>({});
+  const [yieldAllocation, setYieldAllocation] = useState<EmployerAllocation | null>(null);
+  const [yieldSplit, setYieldSplit] = useState<YieldSplit | null>(null);
+  const [isLoadingYield, setIsLoadingYield] = useState(false);
+  const [isWithdrawingYield, setIsWithdrawingYield] = useState(false);
+
   // Error / success messages
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
+
+  // Policy creation form state
+  const [showPolicyForm, setShowPolicyForm] = useState(false);
+  const [policyName, setPolicyName] = useState("");
+  const [policyType, setPolicyType] = useState<"SpendingLimit" | "Allowlist" | "MultiSig" | "Timelock">("SpendingLimit");
+  const [policyMaxAmount, setPolicyMaxAmount] = useState("");
+  const [policyPeriodLimit, setPolicyPeriodLimit] = useState("");
+  const [policyPeriodSeconds, setPolicyPeriodSeconds] = useState("86400");
+  const [policyAllowedTokens, setPolicyAllowedTokens] = useState<string[]>([]);
+  const [policyNewToken, setPolicyNewToken] = useState("");
+  const [policyRequiredSigners, setPolicyRequiredSigners] = useState("1");
+  const [policyAuthorizedSigners, setPolicyAuthorizedSigners] = useState<string[]>([]);
+  const [policyNewSigner, setPolicyNewSigner] = useState("");
+  const [isCreatingPolicy, setIsCreatingPolicy] = useState(false);
 
   // Active tab
   const [activeTab, setActiveTab] = useState<"overview" | "payroll" | "streams" | "policies">("overview");
@@ -111,6 +134,34 @@ export default function EmployerDashboard() {
           setTotalDeposited(deposited);
           setBatchCount(batches);
           setStreamCount(streams);
+        }
+
+        // Load yield data
+        setIsLoadingYield(true);
+        try {
+          const yieldClient2 = new YieldRouterClient();
+          const [sources, split, allocation] = await Promise.all([
+            yieldClient2.getSources(),
+            yieldClient2.getYieldSplit(),
+            yieldClient2.getEmployerAllocation(address),
+          ]);
+
+          if (!cancelled) {
+            setYieldSources(sources);
+            setYieldSplit(split);
+            setYieldAllocation(allocation);
+
+            // Fetch APY for each source
+            const rates: Record<string, number> = {};
+            for (const src of sources) {
+              rates[src] = await yieldClient2.getYieldRate(src);
+            }
+            setYieldRates(rates);
+          }
+        } catch {
+          // Yield data is non-critical
+        } finally {
+          if (!cancelled) setIsLoadingYield(false);
         }
       } catch (err: any) {
         if (!cancelled) {
@@ -279,6 +330,27 @@ export default function EmployerDashboard() {
     }
   }, []);
 
+  // ─── Yield Actions ─────────────────────────────────────────────
+  const handleWithdrawYield = useCallback(async (token: string) => {
+    setIsWithdrawingYield(true);
+    setError(null);
+    setSuccess(null);
+    try {
+      const address = sessionStorage.getItem("noctis_wallet_address");
+      if (!address) throw new Error("Wallet not connected");
+      const yieldClient = new YieldRouterClient();
+      await yieldClient.withdrawYield(address, address, token);
+      setSuccess("Yield withdrawn successfully!");
+      // Reload yield data
+      const allocation = await yieldClient.getEmployerAllocation(address);
+      setYieldAllocation(allocation);
+    } catch (err: any) {
+      setError(err.message || "Failed to withdraw yield");
+    } finally {
+      setIsWithdrawingYield(false);
+    }
+  }, []);
+
   // ─── Submit Payroll ───────────────────────────────────────────
   const handleSubmitPayroll = useCallback(async () => {
     if (csvData.length === 0) {
@@ -294,38 +366,24 @@ export default function EmployerDashboard() {
       const address = sessionStorage.getItem("noctis_wallet_address");
       if (!address) throw new Error("Wallet not connected");
 
-      // 1. Build PayrollBatch
       const recipients = csvData.map(r => ({
         address: r.address,
         amount: r.amount,
         duration_secs: r.duration_secs || 86400,
       }));
 
-      // 2. Compute commitment root (Merkle root of recipient address + amount leaves)
-      const commitmentRoot = new Uint8Array(32); // Simplified: zero root for MVP
-      // TODO: compute real Merkle root matching contract's algorithm
+      // 1. Compute real Merkle root, ZK proof, and nullifiers
+      const result = await processPayrollBatch(
+        recipients,
+        address,
+        totalAmount,
+      );
 
-      // 3. Build mock ZK proof (192 bytes, passes format checks)
-      const zkProof = new Uint8Array(192);
-      zkProof[0] = 0x02;
-      zkProof[47] = 0x01;
-      zkProof[48] = 0x0a;
-      zkProof[143] = 0x0b;
-      zkProof[144] = 0x02;
-      zkProof[191] = 0x03;
+      // 2. Convert hex strings to bytes for Soroban submission
+      const commitmentRoot = hexToBytes(result.merkleRoot).slice(-32);
+      const nullifiers = result.nullifiers.map(n => hexToBytes(n));
 
-      // 4. Build unique nullifiers per recipient
-      const nullifiers = recipients.map((_, i) => {
-        const nf = new Uint8Array(32);
-        const ts = BigInt(Date.now());
-        for (let j = 0; j < 8; j++) {
-          nf[j] = Number((ts >> BigInt(56 - j * 8)) & 0xffn);
-        }
-        nf[8] = i;
-        return nf;
-      });
-
-      // 5. Submit via dispatcher
+      // 3. Submit via dispatcher
       const dispatcherClient = new PayrollDispatcherClient();
       await dispatcherClient.processBatch(
         address,
@@ -333,7 +391,7 @@ export default function EmployerDashboard() {
         recipients,
         totalAmount,
         commitmentRoot,
-        zkProof,
+        result.proofBytes,
         nullifiers,
       );
 
@@ -352,6 +410,79 @@ export default function EmployerDashboard() {
       setIsSubmitting(false);
     }
   }, [csvData, totalAmount]);
+
+  // ─── Policy Token / Signer helpers ────────────────────────────
+  const handleAddToken = useCallback(() => {
+    const t = policyNewToken.trim();
+    if (!t) return;
+    if (policyAllowedTokens.includes(t)) return;
+    setPolicyAllowedTokens(prev => [...prev, t]);
+    setPolicyNewToken("");
+  }, [policyNewToken, policyAllowedTokens]);
+
+  const handleRemoveToken = useCallback((token: string) => {
+    setPolicyAllowedTokens(prev => prev.filter(t => t !== token));
+  }, []);
+
+  const handleAddSigner = useCallback(() => {
+    const s = policyNewSigner.trim();
+    if (!s) return;
+    if (policyAuthorizedSigners.includes(s)) return;
+    setPolicyAuthorizedSigners(prev => [...prev, s]);
+    setPolicyNewSigner("");
+  }, [policyNewSigner, policyAuthorizedSigners]);
+
+  const handleRemoveSigner = useCallback((signer: string) => {
+    setPolicyAuthorizedSigners(prev => prev.filter(s => s !== signer));
+  }, []);
+
+  // ─── Create Policy ───────────────────────────────────────────
+  const handleCreatePolicy = useCallback(async () => {
+    setError(null);
+    setSuccess(null);
+
+    if (!policyName.trim()) { setError("Policy name is required"); return; }
+    if (!policyMaxAmount || BigInt(policyMaxAmount) <= 0n) { setError("Max amount must be > 0"); return; }
+    if (!policyPeriodSeconds || Number(policyPeriodSeconds) <= 0) { setError("Period seconds must be > 0"); return; }
+    if (Number(policyRequiredSigners) < 1) { setError("Required signers must be at least 1"); return; }
+    if (policyType === "MultiSig" && policyAuthorizedSigners.length < Number(policyRequiredSigners)) {
+      setError("Authorized signers must be >= required signers for MultiSig"); return;
+    }
+
+    setIsCreatingPolicy(true);
+    try {
+      const address = sessionStorage.getItem("noctis_wallet_address");
+      if (!address) throw new Error("Wallet not connected");
+
+      const client = new PolicySignerClient();
+      await client.createPolicy(address, address, {
+        name: policyName.trim(),
+        policyType,
+        maxAmount: policyMaxAmount,
+        periodLimit: policyPeriodLimit || "0",
+        periodSeconds: Number(policyPeriodSeconds),
+        allowedTokens: policyAllowedTokens,
+        requiredSigners: Number(policyRequiredSigners),
+        authorizedSigners: policyAuthorizedSigners,
+      });
+
+      setSuccess(`Policy "${policyName}" created successfully!`);
+      setShowPolicyForm(false);
+      setPolicyName("");
+      setPolicyType("SpendingLimit");
+      setPolicyMaxAmount("");
+      setPolicyPeriodLimit("");
+      setPolicyPeriodSeconds("86400");
+      setPolicyAllowedTokens([]);
+      setPolicyRequiredSigners("1");
+      setPolicyAuthorizedSigners([]);
+    } catch (err: any) {
+      setError(err.message || "Failed to create policy");
+    } finally {
+      setIsCreatingPolicy(false);
+    }
+  }, [policyName, policyType, policyMaxAmount, policyPeriodLimit, policyPeriodSeconds,
+      policyAllowedTokens, policyRequiredSigners, policyAuthorizedSigners]);
 
   // ─── Navigate Back ────────────────────────────────────────────
   const handleBack = useCallback(() => {
@@ -497,6 +628,111 @@ export default function EmployerDashboard() {
                       </div>
                     </button>
                   </div>
+                </div>
+
+                {/* Yield */}
+                <div className="mt-6 p-6 rounded-xl bg-surface-light border border-surface-lighter">
+                  <h3 className="font-semibold mb-4">Yield &amp; Rewards</h3>
+
+                  {isLoadingYield ? (
+                    <div className="flex items-center justify-center py-8">
+                      <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-primary" />
+                    </div>
+                  ) : (
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                      {/* Left: Sources + Split */}
+                      <div>
+                        <p className="text-xs text-text-muted mb-2">Yield Sources</p>
+                        {yieldSources.length === 0 ? (
+                          <p className="text-sm text-text-muted italic">No yield sources configured</p>
+                        ) : (
+                          <div className="space-y-2 mb-4">
+                            {yieldSources.map((src) => (
+                              <div
+                                key={src}
+                                className="flex items-center justify-between p-2 rounded-lg bg-surface border border-surface-lighter"
+                              >
+                                <span className="text-sm font-mono">{src}</span>
+                                <span className="text-sm font-semibold text-success">
+                                  {yieldRates[src]?.toFixed(2) ?? "—"}% APY
+                                </span>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+
+                        {yieldSplit && (
+                          <div>
+                            <p className="text-xs text-text-muted mb-2">Yield Split</p>
+                            <div className="space-y-1 text-sm">
+                              <div className="flex items-center justify-between">
+                                <span className="text-text-muted">Employer</span>
+                                <span className="font-semibold">{yieldSplit.employer_share}%</span>
+                              </div>
+                              <div className="flex items-center justify-between">
+                                <span className="text-text-muted">Employee Pool</span>
+                                <span className="font-semibold">{yieldSplit.employee_pool}%</span>
+                              </div>
+                              <div className="flex items-center justify-between">
+                                <span className="text-text-muted">Protocol Fee</span>
+                                <span className="font-semibold">{yieldSplit.protocol_fee}%</span>
+                              </div>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Right: Allocation + Actions */}
+                      <div>
+                        {yieldAllocation && (
+                          <div className="mb-4">
+                            <p className="text-xs text-text-muted mb-2">Your Allocation</p>
+                            <div className="space-y-2">
+                              <div className="p-3 rounded-lg bg-surface border border-surface-lighter">
+                                <p className="text-xs text-text-muted">Total Principal</p>
+                                <p className="text-lg font-bold">
+                                  {formatAmount(yieldAllocation.total_principal)}
+                                </p>
+                              </div>
+                              <div className="grid grid-cols-2 gap-2">
+                                <div className="p-3 rounded-lg bg-surface border border-surface-lighter">
+                                  <p className="text-xs text-text-muted">Accumulated Yield</p>
+                                  <p className="text-base font-semibold text-success">
+                                    {formatAmount(yieldAllocation.accumulated_yield)}
+                                  </p>
+                                </div>
+                                <div className="p-3 rounded-lg bg-surface border border-surface-lighter">
+                                  <p className="text-xs text-text-muted">Claimed Yield</p>
+                                  <p className="text-base font-semibold">
+                                    {formatAmount(yieldAllocation.claimed_yield)}
+                                  </p>
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                        )}
+
+                        <button
+                          onClick={() => handleWithdrawYield(yieldSources[0] || "")}
+                          disabled={isWithdrawingYield || yieldSources.length === 0}
+                          className={`w-full px-4 py-2.5 rounded-lg text-sm font-semibold transition-colors ${
+                            isWithdrawingYield || yieldSources.length === 0
+                              ? "bg-surface-lighter text-text-muted cursor-not-allowed"
+                              : "bg-primary hover:bg-primary-dark text-white"
+                          }`}
+                        >
+                          {isWithdrawingYield ? (
+                            <span className="flex items-center justify-center gap-2">
+                              <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white" />
+                              Withdrawing...
+                            </span>
+                          ) : (
+                            "Withdraw Yield"
+                          )}
+                        </button>
+                      </div>
+                    </div>
+                  )}
                 </div>
 
                 {/* Recent batches */}
@@ -777,7 +1013,209 @@ export default function EmployerDashboard() {
         {/* ═══ POLICIES TAB ════ */}
         {activeTab === "policies" && (
           <div>
-            <h2 className="text-lg font-bold mb-4">Policy Configuration</h2>
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-lg font-bold">Policy Configuration</h2>
+              <button
+                onClick={() => setShowPolicyForm(prev => !prev)}
+                className={`px-4 py-2 rounded-lg text-sm font-semibold transition-colors ${
+                  showPolicyForm
+                    ? "border border-surface-lighter text-text-muted hover:text-text"
+                    : "bg-primary hover:bg-primary-dark text-white"
+                }`}
+              >
+                {showPolicyForm ? "Cancel" : "+ Create Policy"}
+              </button>
+            </div>
+
+            {/* ── Policy Creation Form ── */}
+            {showPolicyForm && (
+              <div className="p-6 rounded-xl bg-surface-light border border-surface-lighter mb-6">
+                <h3 className="font-semibold mb-4">New Policy</h3>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {/* Name */}
+                  <div className="md:col-span-2">
+                    <label className="block text-xs text-text-muted mb-1">Policy Name</label>
+                    <input
+                      type="text"
+                      value={policyName}
+                      onChange={e => setPolicyName(e.target.value)}
+                      placeholder="e.g. Monthly Payroll Limit"
+                      className="w-full px-3 py-2 rounded-lg bg-surface border border-surface-lighter text-sm focus:outline-none focus:border-primary"
+                    />
+                  </div>
+
+                  {/* Policy Type */}
+                  <div>
+                    <label className="block text-xs text-text-muted mb-1">Policy Type</label>
+                    <select
+                      value={policyType}
+                      onChange={e => setPolicyType(e.target.value as any)}
+                      className="w-full px-3 py-2 rounded-lg bg-surface border border-surface-lighter text-sm focus:outline-none focus:border-primary"
+                    >
+                      <option value="SpendingLimit">Spending Limit</option>
+                      <option value="Allowlist">Allowlist</option>
+                      <option value="MultiSig">Multi-Signature</option>
+                      <option value="Timelock">Timelock</option>
+                    </select>
+                  </div>
+
+                  {/* Max Amount */}
+                  <div>
+                    <label className="block text-xs text-text-muted mb-1">Max Amount (per tx)</label>
+                    <input
+                      type="text"
+                      value={policyMaxAmount}
+                      onChange={e => setPolicyMaxAmount(e.target.value)}
+                      placeholder="1000000"
+                      className="w-full px-3 py-2 rounded-lg bg-surface border border-surface-lighter text-sm focus:outline-none focus:border-primary"
+                    />
+                  </div>
+
+                  {/* Period Limit */}
+                  <div>
+                    <label className="block text-xs text-text-muted mb-1">Period Limit</label>
+                    <input
+                      type="text"
+                      value={policyPeriodLimit}
+                      onChange={e => setPolicyPeriodLimit(e.target.value)}
+                      placeholder="5000000"
+                      className="w-full px-3 py-2 rounded-lg bg-surface border border-surface-lighter text-sm focus:outline-none focus:border-primary"
+                    />
+                  </div>
+
+                  {/* Period Seconds */}
+                  <div>
+                    <label className="block text-xs text-text-muted mb-1">Period (seconds)</label>
+                    <input
+                      type="text"
+                      value={policyPeriodSeconds}
+                      onChange={e => setPolicyPeriodSeconds(e.target.value)}
+                      placeholder="86400"
+                      className="w-full px-3 py-2 rounded-lg bg-surface border border-surface-lighter text-sm focus:outline-none focus:border-primary"
+                    />
+                  </div>
+
+                  {/* Required Signers */}
+                  <div>
+                    <label className="block text-xs text-text-muted mb-1">Required Signers</label>
+                    <input
+                      type="number"
+                      min="1"
+                      value={policyRequiredSigners}
+                      onChange={e => setPolicyRequiredSigners(e.target.value)}
+                      className="w-full px-3 py-2 rounded-lg bg-surface border border-surface-lighter text-sm focus:outline-none focus:border-primary"
+                    />
+                  </div>
+
+                  {/* Allowed Tokens */}
+                  <div className="md:col-span-2">
+                    <label className="block text-xs text-text-muted mb-1">Allowed Tokens</label>
+                    <div className="flex gap-2 mb-2">
+                      <input
+                        type="text"
+                        value={policyNewToken}
+                        onChange={e => setPolicyNewToken(e.target.value)}
+                        onKeyDown={e => { if (e.key === "Enter") { e.preventDefault(); handleAddToken(); } }}
+                        placeholder="G... contract address"
+                        className="flex-1 px-3 py-2 rounded-lg bg-surface border border-surface-lighter text-sm focus:outline-none focus:border-primary"
+                      />
+                      <button
+                        onClick={handleAddToken}
+                        className="px-3 py-2 rounded-lg bg-primary/20 text-primary hover:bg-primary/30 text-sm font-semibold transition-colors"
+                      >
+                        Add
+                      </button>
+                    </div>
+                    {policyAllowedTokens.length > 0 && (
+                      <div className="flex flex-wrap gap-2">
+                        {policyAllowedTokens.map(t => (
+                          <span
+                            key={t}
+                            className="inline-flex items-center gap-1 px-2 py-1 rounded bg-surface border border-surface-lighter text-xs font-mono"
+                          >
+                            {truncateAddress(t)}
+                            <button
+                              onClick={() => handleRemoveToken(t)}
+                              className="text-text-muted hover:text-error transition-colors"
+                            >
+                              ×
+                            </button>
+                          </span>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Authorized Signers */}
+                  <div className="md:col-span-2">
+                    <label className="block text-xs text-text-muted mb-1">Authorized Signers</label>
+                    <div className="flex gap-2 mb-2">
+                      <input
+                        type="text"
+                        value={policyNewSigner}
+                        onChange={e => setPolicyNewSigner(e.target.value)}
+                        onKeyDown={e => { if (e.key === "Enter") { e.preventDefault(); handleAddSigner(); } }}
+                        placeholder="G... address"
+                        className="flex-1 px-3 py-2 rounded-lg bg-surface border border-surface-lighter text-sm focus:outline-none focus:border-primary"
+                      />
+                      <button
+                        onClick={handleAddSigner}
+                        className="px-3 py-2 rounded-lg bg-primary/20 text-primary hover:bg-primary/30 text-sm font-semibold transition-colors"
+                      >
+                        Add
+                      </button>
+                    </div>
+                    {policyAuthorizedSigners.length > 0 && (
+                      <div className="flex flex-wrap gap-2">
+                        {policyAuthorizedSigners.map(s => (
+                          <span
+                            key={s}
+                            className="inline-flex items-center gap-1 px-2 py-1 rounded bg-surface border border-surface-lighter text-xs font-mono"
+                          >
+                            {truncateAddress(s)}
+                            <button
+                              onClick={() => handleRemoveSigner(s)}
+                              className="text-text-muted hover:text-error transition-colors"
+                            >
+                              ×
+                            </button>
+                          </span>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                <div className="mt-6 flex items-center gap-3">
+                  <button
+                    onClick={handleCreatePolicy}
+                    disabled={isCreatingPolicy}
+                    className={`px-6 py-2.5 rounded-lg text-sm font-semibold transition-colors ${
+                      isCreatingPolicy
+                        ? "bg-surface-lighter text-text-muted cursor-not-allowed"
+                        : "bg-primary hover:bg-primary-dark text-white"
+                    }`}
+                  >
+                    {isCreatingPolicy ? (
+                      <span className="flex items-center gap-2">
+                        <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white" />
+                        Creating...
+                      </span>
+                    ) : (
+                      "Create Policy"
+                    )}
+                  </button>
+                  <button
+                    onClick={() => setShowPolicyForm(false)}
+                    className="px-4 py-2.5 rounded-lg border border-surface-lighter hover:border-text-muted text-sm text-text-muted transition-colors"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* ── Active Policies List ── */}
             <div className="p-6 rounded-xl bg-surface-light border border-surface-lighter">
               <h3 className="font-semibold mb-3">Active Policies</h3>
               <p className="text-xs text-text-muted mb-4">
@@ -786,15 +1224,6 @@ export default function EmployerDashboard() {
               </p>
 
               <PolicyList walletAddress={walletAddress} />
-
-              <div className="mt-6 p-4 rounded-lg bg-primary/5 border border-primary/10 text-xs text-text-muted">
-                <p className="font-semibold text-primary mb-1">Info</p>
-                <p>
-                  Policy management (create, revoke) requires on-chain
-                  transactions. Use the Stellar laboratory or CLI for
-                  advanced configuration.
-                </p>
-              </div>
             </div>
           </div>
         )}

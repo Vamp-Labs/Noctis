@@ -72,6 +72,7 @@ export interface WalletState {
   isConnected: boolean;
   isConnecting: boolean;
   isPasskey: boolean;
+  walletId: number | null;
   error: string | null;
 }
 

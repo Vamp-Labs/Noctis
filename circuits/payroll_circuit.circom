@@ -8,7 +8,7 @@
 // Dependency: circomlib (Poseidon hash)
 //   npm install circomlib
 
-pragma circom 2.1.2;
+pragma circom 2.2.0;
 
 include "circomlib/poseidon.circom";
 
@@ -21,30 +21,39 @@ template MerkleTreeVerifier(depth) {
     signal input siblings[depth];               // Sibling hashes at each level
     signal input indices[depth];                // 0 = left, 1 = right at each level
 
-    signal current;
+    signal cur[depth + 1];
+    signal left[depth];
+    signal right[depth];
+    signal diff1[depth];
+    signal diff2[depth];
+    component hash[depth];
 
-    current <== leaf;
+    // Pre-declare hash components (required by circom ≥2.2)
+    for (var i = 0; i < depth; i++) {
+        hash[i] = Poseidon(2);
+    }
+
+    cur[0] <== leaf;
 
     // Traverse up the tree, hashing with sibling at each level
     for (var i = 0; i < depth; i++) {
-        // Use Poseidon 2-to-1 hash
-        // If index[i] == 0: hash(current, sibling)
-        // If index[i] == 1: hash(sibling, current)
-        signal pos;
-        component hash = Poseidon(2);
+        // Decomposed multiplexer to keep each constraint quadratic:
+        //   left  = cur + idx * (sibling - cur)
+        //   right = sibling + idx * (cur - sibling)
+        diff1[i] <== siblings[i] - cur[i];
+        left[i] <== cur[i] + indices[i] * diff1[i];
 
-        // Mux based on index bit
-        var left  = (1 - indices[i]) * current + indices[i] * siblings[i];
-        var right = (1 - indices[i]) * siblings[i] + indices[i] * current;
+        diff2[i] <== cur[i] - siblings[i];
+        right[i] <== siblings[i] + indices[i] * diff2[i];
 
-        hash.inputs[0] <== left;
-        hash.inputs[1] <== right;
+        hash[i].inputs[0] <== left[i];
+        hash[i].inputs[1] <== right[i];
 
-        current <== hash.out;
+        cur[i + 1] <== hash[i].out;
     }
 
     // Constrain final hash equals expected root
-    root === current;
+    root === cur[depth];
 }
 
 // ─── Nullifier Check ─────────────────────────────────────────────
@@ -105,48 +114,54 @@ template PayrollBatch(num_recipients) {
 
     // ===== CONSTRAINTS =====
 
-    // Sum accumulator
-    signal total_sum;
+    // Pre-declare component arrays (required by circom ≥2.2)
+    component rangeCheck[num_recipients];
+    component leafHash[num_recipients];
+    component merkleVerifier[num_recipients];
+    component nullifierCheck[num_recipients];
 
-    // Initialize
-    total_sum <== 0;
+    for (var i = 0; i < num_recipients; i++) {
+        rangeCheck[i] = AmountRangeCheck();
+        leafHash[i] = Poseidon(3);
+        merkleVerifier[i] = MerkleTreeVerifier(20);
+        nullifierCheck[i] = NullifierComputer();
+    }
+
+    // Sum accumulator (use array to avoid reassignment)
+    signal total_sum[num_recipients + 1];
+
+    total_sum[0] <== 0;
 
     // Process each recipient
     for (var i = 0; i < num_recipients; i++) {
         // ─── Constraint 1: Amount range check ──────────
-        component rangeCheck = AmountRangeCheck();
-        rangeCheck.amount <== payment_amounts[i];
+        rangeCheck[i].amount <== payment_amounts[i];
 
         // ─── Constraint 2: Create leaf hash ────────────
-        component leafHash = Poseidon(3);
-        leafHash.inputs[0] <== recipient_addresses[i];
-        leafHash.inputs[1] <== payment_amounts[i];
-        leafHash.inputs[2] <== stream_durations[i];
+        leafHash[i].inputs[0] <== recipient_addresses[i];
+        leafHash[i].inputs[1] <== payment_amounts[i];
+        leafHash[i].inputs[2] <== stream_durations[i];
 
         // ─── Constraint 3: Merkle tree verification ─────
-        component merkleVerifier = MerkleTreeVerifier(20);
-        merkleVerifier.leaf <== leafHash.out;
-        merkleVerifier.root <== batch_commitment;
+        merkleVerifier[i].leaf <== leafHash[i].out;
+        merkleVerifier[i].root <== batch_commitment;
         for (var j = 0; j < 20; j++) {
-            merkleVerifier.siblings[j] <== merkle_proofs[i][j];
-            merkleVerifier.indices[j] <== merkle_proof_indices[i][j];
+            merkleVerifier[i].siblings[j] <== merkle_proofs[i][j];
+            merkleVerifier[i].indices[j] <== merkle_proof_indices[i][j];
         }
 
         // ─── Constraint 4: Nullifier computation ────────
-        component nullifierCheck = NullifierComputer();
-        nullifierCheck.employer_address <== employer_address;
-        nullifierCheck.batch_commitment <== batch_commitment;
-        nullifierCheck.payment_index <== i;
-        nullifierCheck.expected_nullifier <== batch_nullifiers[i];
+        nullifierCheck[i].employer_address <== employer_address;
+        nullifierCheck[i].batch_commitment <== batch_commitment;
+        nullifierCheck[i].payment_index <== i;
+        nullifierCheck[i].expected_nullifier <== batch_nullifiers[i];
 
         // ─── Constraint 5: Accumulate amount ────────────
-        signal new_total;
-        new_total <== total_sum + payment_amounts[i];
-        total_sum <== new_total;
+        total_sum[i + 1] <== total_sum[i] + payment_amounts[i];
     }
 
     // ─── Constraint 6: Total amount verification ────────
-    total_sum === batch_total_amount;
+    total_sum[num_recipients] === batch_total_amount;
 
     // ─── Constraint 7: Circuit version check ────────────
     circuit_version === 1;

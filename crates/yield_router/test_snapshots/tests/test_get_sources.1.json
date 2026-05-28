@@ -211,6 +211,44 @@
                       "key": {
                         "vec": [
                           {
+                            "symbol": "SourceStrategy"
+                          },
+                          {
+                            "symbol": "blend"
+                          }
+                        ]
+                      },
+                      "val": {
+                        "vec": [
+                          {
+                            "symbol": "DirectHold"
+                          }
+                        ]
+                      }
+                    },
+                    {
+                      "key": {
+                        "vec": [
+                          {
+                            "symbol": "SourceStrategy"
+                          },
+                          {
+                            "symbol": "soroswap"
+                          }
+                        ]
+                      },
+                      "val": {
+                        "vec": [
+                          {
+                            "symbol": "DirectHold"
+                          }
+                        ]
+                      }
+                    },
+                    {
+                      "key": {
+                        "vec": [
+                          {
                             "symbol": "YieldSources"
                           }
                         ]

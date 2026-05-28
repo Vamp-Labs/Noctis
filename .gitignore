@@ -24,3 +24,10 @@ coverage/
 # Local configuration
 .env
 .env.local
+
+# Node.js
+node_modules/
+
+# Next.js build output
+frontend/out/
+frontend/.next/

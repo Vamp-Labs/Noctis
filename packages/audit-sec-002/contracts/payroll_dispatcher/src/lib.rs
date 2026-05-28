@@ -156,7 +156,7 @@ impl PayrollDispatcher {
         let admin: Address = env
             .storage().instance()
             .get(&DataKey::Admin)
-            .ok_or(Error::InternalError)?;
+            .unwrap();
         admin.require_auth();
 
         env.storage().instance().set(&DataKey::Token, &token);
@@ -198,7 +198,7 @@ impl PayrollDispatcher {
         // Verify sum of amounts equals total_amount
         let mut sum: i128 = 0;
         for i in 0..batch.amounts.len() {
-            let amt = batch.amounts.get(i).ok_or(Error::InvalidBatchFormat)?;
+            let amt = batch.amounts.get(i).unwrap();
             if amt <= 0 {
                 return Err(Error::InvalidBatchFormat);
             }
@@ -218,7 +218,7 @@ impl PayrollDispatcher {
 
         // ---- NULLIFIER CHECK ----
         for i in 0..batch.nullifiers.len() {
-            let nullifier = batch.nullifiers.get(i).ok_or(Error::InvalidBatchFormat)?;
+            let nullifier = batch.nullifiers.get(i).unwrap();
             if env
                 .storage().instance()
                 .has(&DataKey::NullifierSet(nullifier))
@@ -252,16 +252,16 @@ impl PayrollDispatcher {
         let token: Address = env
             .storage().instance()
             .get(&DataKey::Token)
-            .ok_or(Error::InternalError)?;
+            .unwrap();
 
         let mut stream_count: u32 = 0;
         let now = env.ledger().timestamp();
 
         for i in 0..batch.recipients.len() {
-            let employee = batch.recipients.get(i).ok_or(Error::InvalidBatchFormat)?;
-            let amount = batch.amounts.get(i).ok_or(Error::InvalidBatchFormat)?;
+            let employee = batch.recipients.get(i).unwrap();
+            let amount = batch.amounts.get(i).unwrap();
             let duration = if i < batch.stream_durations.len() {
-                batch.stream_durations.get(i).ok_or(Error::InvalidBatchFormat)?
+                batch.stream_durations.get(i).unwrap()
             } else {
                 86400u64 // Default: 1 day
             };
@@ -303,7 +303,7 @@ impl PayrollDispatcher {
         // ---- EMIT NULLIFIERS ----
         let mut nullifier_count: u32 = 0;
         for i in 0..batch.nullifiers.len() {
-            let nullifier = batch.nullifiers.get(i).ok_or(Error::InvalidBatchFormat)?;
+            let nullifier = batch.nullifiers.get(i).unwrap();
             env.storage().instance()
                 .set(&DataKey::NullifierSet(nullifier), &true);
             nullifier_count += 1;
@@ -448,7 +448,7 @@ impl PayrollDispatcher {
         let _trusted_hash: BytesN<32> = env
             .storage().instance()
             .get(&DataKey::TrustedSetupHash)
-            .expect("TrustedSetupHash must be configured");
+            .unwrap();
 
         // Parse proof components
         // [0..48]:   π_A (G1 compressed)
@@ -481,8 +481,8 @@ impl PayrollDispatcher {
 
         // Hash each (recipient, amount) pair into a leaf using Bytes
         for i in 0..recipients.len() {
-            let recipient = recipients.get(i).expect("recipient index must be in bounds");
-            let amount = amounts.get(i).expect("amount index must be in bounds");
+            let recipient = recipients.get(i).unwrap();
+            let amount = amounts.get(i).unwrap();
 
             // Build leaf data: hash(recipient_address_bytes ++ amount_bytes)
             let mut leaf_data = Bytes::new(env);
@@ -490,7 +490,7 @@ impl PayrollDispatcher {
             // Serialize recipient address into bytes using to_bytes()
             let rec_bytes = recipient.to_string().to_bytes();
             for j in 0..rec_bytes.len() {
-                leaf_data.push_back(rec_bytes.get(j).expect("rec_bytes index must be in bounds"));
+                leaf_data.push_back(rec_bytes.get(j).unwrap());
             }
 
             // Serialize amount into bytes (16 bytes for i128/u128)
@@ -509,9 +509,9 @@ impl PayrollDispatcher {
 
             let mut j = 0;
             while j < leaves.len() {
-                let left = leaves.get(j).expect("leaf index must be in bounds");
+                let left = leaves.get(j).unwrap();
                 if j + 1 < leaves.len() {
-                    let right = leaves.get(j + 1).expect("leaf+1 index must be in bounds");
+                    let right = leaves.get(j + 1).unwrap();
                     // Hash(left || right)
                     let mut combined = Bytes::new(env);
                     let left_arr = left.to_array();
@@ -535,7 +535,7 @@ impl PayrollDispatcher {
         }
 
         // Return the root (last remaining element)
-        leaves.get(0).expect("Merkle tree must have a root after reduction")
+        leaves.get(0).unwrap()
     }
 
     /// Verify a nullifier has not been used before
@@ -570,7 +570,7 @@ impl PayrollDispatcher {
     pub fn get_trusted_setup_hash(env: Env) -> BytesN<32> {
         env.storage().instance()
             .get(&DataKey::TrustedSetupHash)
-            .expect("TrustedSetupHash must be configured")
+            .unwrap()
     }
 
     /// Emergency pause (admin only)
@@ -578,7 +578,7 @@ impl PayrollDispatcher {
         let admin: Address = env
             .storage().instance()
             .get(&DataKey::Admin)
-            .expect("Admin must be configured");
+            .unwrap();
         admin.require_auth();
         env.storage().instance()
             .set(&DataKey::Paused, &true);
@@ -593,7 +593,7 @@ impl PayrollDispatcher {
         let admin: Address = env
             .storage().instance()
             .get(&DataKey::Admin)
-            .expect("Admin must be configured");
+            .unwrap();
         admin.require_auth();
         env.storage().instance()
             .set(&DataKey::Paused, &false);

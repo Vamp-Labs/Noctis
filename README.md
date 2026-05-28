@@ -18,11 +18,11 @@ Noctis combines **Groth16 zero-knowledge proofs**, **per-second payment streamin
 
 | Contract | Purpose | Status |
 |----------|---------|--------|
-| **payroll_dispatcher** | ZK batch payroll entry point | ✅ Skeleton |
-| **streaming_vault** | Per-second payment streaming | ✅ Skeleton |
-| **wallet_factory** | Passkey-authenticated smart wallets (SEP-45) | ✅ Skeleton |
-| **yield_router** | Blend/Soroswap yield routing | ✅ Skeleton |
-| **policy_signer** | Policy-enforced authorization & spending limits | ✅ Skeleton |
+| **payroll_dispatcher** | ZK batch payroll entry point | ✅ Implemented (893 lines, 11 tests) |
+| **streaming_vault** | Per-second payment streaming | ✅ Implemented (717 lines, 7 tests) |
+| **wallet_factory** | Passkey-authenticated smart wallets (SEP-45) | ✅ Implemented (~500 lines, 8 tests) |
+| **yield_router** | Blend/Soroswap yield routing | ✅ Implemented (718 lines, 10 tests) |
+| **policy_signer** | Policy-enforced authorization & spending limits | ✅ Implemented (~400 lines, 6 tests) |
 
 ## 🚀 Quick Start
 
@@ -283,8 +283,11 @@ RUST_LOG=debug cargo test -- --nocapture
 ```
 
 **Current Test Status:**
-- ✅ 5 contracts → 5 basic tests (all passing)
-- 🚧 Full logic tests in DEV-002, DEV-003 (Implementation phase)
+- ✅ **42 tests across 5 contracts** (all passing, zero warnings)
+- ✅ `cargo audit` — zero vulnerabilities
+- ✅ WASM builds verified (all < 17 KB each)
+- ⚠️ Internal audit (SEC-001) — 8 findings: 5 fixed, 3 acknowledged (ZK proof stub #1 open item)
+- 🚧 Integration/E2E tests on testnet — in progress
 
 ## 🔐 Security
 
@@ -298,10 +301,11 @@ RUST_LOG=debug cargo test -- --nocapture
 - [ ] Reentrancy prevention
 
 ### Known Limitations (MVP Testnet)
-- Contracts are **skeleton stubs** with `TODO` implementation notes
-- No formal verification; suitable for testnet demonstration only
+- ZK proof verification is a **stub** — format check only, no actual BLS12-381 Groth16 pairing
+- Yield routing is **simulated** — `deposit_to_source` is a no-op (MVP simplification)
 - Powers of Tau ceremony is local (production requires MPC)
-- ZK circuits not yet integrated (Phase 2)
+- No formal verification; testnet demonstration only
+- **⚠️ TESTNET ONLY** — no mainnet deployment. Hardcoded network guard prevents mainnet use.
 
 ## 📦 Deployment
 
@@ -455,6 +459,7 @@ For questions or issues:
 
 ---
 
-**Last Updated:** May 27, 2026  
-**Status:** M1 Milestone — DEV-008 Smart Contract Skeleton  
-**Next Steps:** DEV-002 (Streaming Logic), DEV-003 (Smart Wallet Implementation)
+**Last Updated:** May 28, 2026  
+**Status:** All 5 contracts implemented with 42 tests — focus: testnet-only development  
+**Network:** ⚠️ Stellar Testnet (Protocol 26 "Yardstick") — NO mainnet  
+**Next Steps:** Continue testnet iteration — fix remaining findings, integration testing, frontend polish

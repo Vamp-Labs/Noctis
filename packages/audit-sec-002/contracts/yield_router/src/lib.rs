@@ -131,7 +131,7 @@ impl YieldRouter {
 
     /// Set the payroll dispatcher address (authorized caller)
     pub fn set_payroll_dispatcher(env: Env, dispatcher: Address) {
-        let admin: Address = env.storage().instance().get(&DataKey::Admin).expect("Admin must be configured");
+        let admin: Address = env.storage().instance().get(&DataKey::Admin).unwrap();
         admin.require_auth();
         env.storage().instance()
             .set(&DataKey::PayrollDispatcher, &dispatcher);
@@ -139,7 +139,7 @@ impl YieldRouter {
 
     /// Register a new yield source (admin only)
     pub fn register_source(env: Env, name: Symbol, pool_address: Address, initial_rate: u32) -> Result<(), Error> {
-        let admin: Address = env.storage().instance().get(&DataKey::Admin).ok_or(Error::InternalError)?;
+        let admin: Address = env.storage().instance().get(&DataKey::Admin).unwrap();
         admin.require_auth();
 
         // Check: source does not already exist
@@ -182,7 +182,7 @@ impl YieldRouter {
         amount: i128,
     ) -> Result<i128, Error> {
         // Access control: only payroll_dispatcher can call
-        let dispatcher: Address = env.storage().instance().get(&DataKey::PayrollDispatcher).ok_or(Error::Unauthorized)?;
+        let dispatcher: Address = env.storage().instance().get(&DataKey::PayrollDispatcher).unwrap();
         dispatcher.require_auth();
 
         // Guard
@@ -227,7 +227,7 @@ impl YieldRouter {
             });
 
         for i in 0..sources.len() {
-            let source_name = sources.get(i).ok_or(Error::NoSourcesRegistered)?;
+            let source_name = sources.get(i).unwrap();
             let source_addr: Address = env
                 .storage().instance()
                 .get(&DataKey::SourceAddress(source_name.clone()))
@@ -308,7 +308,7 @@ impl YieldRouter {
         }
 
         // Get yield split config
-        let split: YieldSplit = env.storage().instance().get(&DataKey::YieldSplitConfig).ok_or(Error::InternalError)?;
+        let split: YieldSplit = env.storage().instance().get(&DataKey::YieldSplitConfig).unwrap();
 
         // Calculate split
         let employer_yield = total_yield * (split.employer_share as i128) / 10000;
@@ -329,7 +329,7 @@ impl YieldRouter {
 
         // Transfer protocol fee to admin
         if protocol_fee_yield > 0 {
-            let admin: Address = env.storage().instance().get(&DataKey::Admin).ok_or(Error::InternalError)?;
+            let admin: Address = env.storage().instance().get(&DataKey::Admin).unwrap();
             token_client.transfer(
                 &env.current_contract_address(),
                 &admin,
@@ -382,7 +382,7 @@ impl YieldRouter {
         let mut total_weight: i128 = 0;
 
         for i in 0..sources.len() {
-            let source_name = sources.get(i).expect("source index must be in bounds");
+            let source_name = sources.get(i).unwrap();
             let principal = allocation.by_source.get(source_name.clone()).unwrap_or(0);
             if principal > 0 {
                 let rate: u32 = env
@@ -424,7 +424,7 @@ impl YieldRouter {
 
     /// Update yield rate for a source (admin only)
     pub fn update_rate(env: Env, source: Symbol, new_rate: u32) -> Result<(), Error> {
-        let admin: Address = env.storage().instance().get(&DataKey::Admin).ok_or(Error::InternalError)?;
+        let admin: Address = env.storage().instance().get(&DataKey::Admin).unwrap();
         admin.require_auth();
 
         if !env.storage().instance().has(&DataKey::SourceAddress(source.clone())) {
@@ -455,12 +455,12 @@ impl YieldRouter {
     pub fn get_yield_split(env: Env) -> YieldSplit {
         env.storage().instance()
             .get(&DataKey::YieldSplitConfig)
-            .expect("YieldSplitConfig must be configured")
+            .unwrap()
     }
 
     /// Set the yield split configuration (admin/governance only)
     pub fn set_yield_split(env: Env, split: YieldSplit) -> Result<(), Error> {
-        let admin: Address = env.storage().instance().get(&DataKey::Admin).ok_or(Error::InternalError)?;
+        let admin: Address = env.storage().instance().get(&DataKey::Admin).unwrap();
         admin.require_auth();
 
         // Validate: shares must sum to 10000
@@ -507,14 +507,14 @@ impl YieldRouter {
 
     /// Emergency pause (admin only)
     pub fn pause(env: Env) {
-        let admin: Address = env.storage().instance().get(&DataKey::Admin).expect("Admin must be configured");
+        let admin: Address = env.storage().instance().get(&DataKey::Admin).unwrap();
         admin.require_auth();
         env.storage().instance().set(&DataKey::Paused, &true);
     }
 
     /// Emergency unpause (admin only)
     pub fn unpause(env: Env) {
-        let admin: Address = env.storage().instance().get(&DataKey::Admin).expect("Admin must be configured");
+        let admin: Address = env.storage().instance().get(&DataKey::Admin).unwrap();
         admin.require_auth();
         env.storage().instance().set(&DataKey::Paused, &false);
     }

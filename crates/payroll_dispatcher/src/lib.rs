@@ -948,12 +948,29 @@ mod tests {
         let token = Address::generate(&env);
         let setup_hash = BytesN::from_array(&env, &[1u8; 32]);
 
-        let proof = Bytes::from_array(&env, &[0u8; 192]);
+        let mut proof_bytes = [0u8; 384];
+        proof_bytes[0] = 0x40;
+        proof_bytes[96] = 0x40;
+        proof_bytes[288] = 0x40;
+        let proof = Bytes::from_array(&env, &proof_bytes);
 
         let contract_id = env.register(PayrollDispatcher, (&admin,));
         let client = PayrollDispatcherClient::new(&env, &contract_id);
 
         client.configure(&token, &setup_hash);
+
+        // Set verification key with identity points (required by Groth16 check)
+        let mut g1_id = [0u8; 96];
+        g1_id[0] = 0x40;
+        let mut g2_id = [0u8; 192];
+        g2_id[0] = 0x40;
+        client.set_verification_key(
+            &BytesN::from_array(&env, &g1_id),
+            &BytesN::from_array(&env, &g2_id),
+            &BytesN::from_array(&env, &g2_id),
+            &BytesN::from_array(&env, &g2_id),
+            &vec![&env, BytesN::from_array(&env, &g1_id), BytesN::from_array(&env, &g1_id)],
+        );
 
         let batch = PayrollBatch {
             employer,

@@ -330,18 +330,15 @@ function computeMerkleRoot(recipients: string[], amounts: number[]): Uint8Array 
   return leaves[0];
 }
 
-/** Build a valid 192-byte Groth16 mock proof (passes format checks) */
+/** Build a valid 384-byte Groth16 mock proof (passes format checks) */
 function buildMockProof(): Uint8Array {
-  const proof = new Uint8Array(192);
-  // π_A (G1): first byte non-zero
-  proof[0] = 0x02;
-  proof[47] = 0x01;
-  // π_B (G2): needs non-zero
-  proof[48] = 0x0a;
-  proof[143] = 0x0b;
-  // π_C (G1): needs non-zero
-  proof[144] = 0x02;
-  proof[191] = 0x03;
+  const proof = new Uint8Array(384);
+  // π_A (G1 uncompressed 96 bytes): identity point (0x40 prefix)
+  proof[0] = 0x40;
+  // π_B (G2 uncompressed 192 bytes): identity point
+  proof[96] = 0x40;
+  // π_C (G1 uncompressed 96 bytes): identity point
+  proof[288] = 0x40;
   return proof;
 }
 

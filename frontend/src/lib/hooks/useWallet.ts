@@ -4,6 +4,7 @@ import { useState, useCallback, useEffect } from "react";
 import type { WalletState, UserRole, UserProfile } from "@/types";
 import { STELLAR_NETWORK } from "@/types";
 import { WalletFactoryClient } from "@/lib/contracts/walletFactory";
+import { isConnected, requestAccess } from "@stellar/freighter-api";
 
 // ─── Session Constants ────────────────────────────────────────────
 const SESSION_DURATION_MS = 24 * 60 * 60 * 1000;
@@ -177,42 +178,50 @@ export function useWallet() {
     []
   );
 
-  /** Connect via Freighter browser extension */
-  const connectFreighter = useCallback(async () => {
-    setState((s) => ({ ...s, isConnecting: true, error: null }));
-    try {
-      const api = getFreighterApi();
-      if (!api) {
-        throw new Error(
-          "Freighter wallet not detected. Make sure:\n" +
-          "1. Freighter extension is installed (freighter.app)\n" +
-          "2. You're using HTTPS or localhost\n" +
-          "3. Freighter has permission on this site (click extension → settings → allow this site)\n" +
-          "If it still doesn't work, try refreshing the page."
-        );
-      }
-      const { isConnected } = await api.isConnected();
-      if (!isConnected) {
-        await api.getPublicKey(); // triggers connection prompt
-      }
-      const pubkey = await api.getPublicKey();
-      persistState(pubkey, false);
-      setState({
-        address: pubkey,
-        isConnected: true,
-        isConnecting: false,
-        isPasskey: false,
-        walletId: null,
-        error: null,
-      });
-    } catch (err: any) {
-      setState((s) => ({
-        ...s,
-        isConnecting: false,
-        error: err.message || "Failed to connect Freighter",
-      }));
+/** Connect via Freighter browser extension */
+const connectFreighter = useCallback(async () => {
+  setState((s) => ({ ...s, isConnecting: true, error: null }));
+  
+  try {
+    // 1. Check if the extension is installed and available in the browser
+    const hasExtension = await isConnected();
+    if (!hasExtension) {
+      throw new Error(
+        "Freighter wallet not detected. Make sure:\n" +
+        "1. Freighter extension is installed (freighter.app)\n" +
+        "2. You're using HTTPS or localhost\n" +
+        "3. Freighter has permission on this site (click extension → settings → allow this site)\n" +
+        "If it still doesn't work, try refreshing the page."
+      );
     }
-  }, [persistState]);
+
+    // 2. requestAccess() prompts the extension permission popup 
+    // and returns the public key array/string upon user approval.
+    const pubkey = await requestAccess();
+    
+    if (!pubkey) {
+      throw new Error("No accounts found or connection rejected by user.");
+    }
+
+    // 3. Persist and update state
+    persistState(pubkey.address, false);
+    setState({
+      address: pubkey.address,
+      isConnected: true,
+      isConnecting: false,
+      isPasskey: false,
+      walletId: null,
+      error: null,
+    });
+
+  } catch (err: any) {
+    setState((s) => ({
+      ...s,
+      isConnecting: false,
+      error: err.message || "Failed to connect Freighter",
+    }));
+  }
+}, [persistState]);
 
   /** Register a new passkey and deploy wallet on-chain */
   const registerPasskey = useCallback(async () => {

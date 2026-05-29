@@ -7,7 +7,9 @@ import { PayrollDispatcherClient } from "@/lib/contracts/payrollDispatcher";
 import { YieldRouterClient } from "@/lib/contracts/yieldRouter";
 import { PolicySignerClient } from "@/lib/contracts/policySigner";
 import { processPayrollBatch, hexToBytes } from "@/lib/zk";
-import { claimFaucet, hasClaimedInSession, markClaimedInSession } from "@/lib/faucet";
+import { computeSha256MerkleRoot, buildMockProof, computeDevNullifiers } from "@/lib/quickPayroll";
+import { claimFaucetWithTrustline, hasClaimedInSession, markClaimedInSession } from "@/lib/faucet";
+import { getNoctisBalance } from "@/lib/trustline";
 import type { StreamData, PayrollRecipient, PolicyConfig, YieldSplit, EmployerAllocation } from "@/types";
 import Papa from "papaparse";
 
@@ -51,6 +53,7 @@ export default function EmployerDashboard() {
 
   // Dashboard data
   const [totalDeposited, setTotalDeposited] = useState("0");
+  const [noctisBalance, setNoctisBalance] = useState("0");
   const [batchCount, setBatchCount] = useState(0);
   const [streamCount, setStreamCount] = useState(0);
   const [isLoading, setIsLoading] = useState(true);
@@ -60,6 +63,14 @@ export default function EmployerDashboard() {
   const [csvFileName, setCsvFileName] = useState<string>("");
   const [totalAmount, setTotalAmount] = useState("0");
   const [isSubmitting, setIsSubmitting] = useState(false);
+
+  // Quick Payroll mode (no CSV, no ZK — lightweight dev/test)
+  const [quickMode, setQuickMode] = useState(false);
+  const [quickRecipients, setQuickRecipients] = useState<PayrollRecipient[]>([]);
+  const [quickAddress, setQuickAddress] = useState("");
+  const [quickAmount, setQuickAmount] = useState("");
+  const [quickDuration, setQuickDuration] = useState("86400");
+  const [isQuickSubmitting, setIsQuickSubmitting] = useState(false);
 
   // Streams
   const [employerStreams, setEmployerStreams] = useState<StreamData[]>([]);
@@ -128,15 +139,17 @@ export default function EmployerDashboard() {
         const payrollClient = new PayrollDispatcherClient();
         const yieldClient = new YieldRouterClient();
 
-        const [deposited, batches, streams, _totalDeposited] = await Promise.all([
+        const [deposited, batches, streams, _totalDeposited, noctisBal] = await Promise.all([
           vaultClient.getEmployerBalance(address),
           payrollClient.getBatchCount(),
           vaultClient.getStreamCount(),
           yieldClient.getTotalDeposited(),
+          getNoctisBalance(address),
         ]);
 
         if (!cancelled) {
           setTotalDeposited(deposited);
+          setNoctisBalance(noctisBal);
           setBatchCount(batches);
           setStreamCount(streams);
 
@@ -371,12 +384,24 @@ export default function EmployerDashboard() {
       const address = sessionStorage.getItem("noctis_wallet_address");
       if (!address) throw new Error("Wallet not connected");
 
-      const result = await claimFaucet(address);
+      // Full flow: check trustline → create if needed → claim tokens
+      const result = await claimFaucetWithTrustline(address, (step) => {
+        setSuccess(step);
+      });
+
       markClaimedInSession(address);
       setShowFaucetBanner(false);
       setSuccess(result.message || `Claimed ${result.amount} NOCTIS tokens!`);
-      // Reload balance
-      setTotalDeposited(result.amount || "100000");
+      // Reload balances
+      const addr = sessionStorage.getItem("noctis_wallet_address");
+      if (addr) {
+        const [newDeposited, newBalance] = await Promise.all([
+          new StreamingVaultClient().getEmployerBalance(addr),
+          getNoctisBalance(addr),
+        ]);
+        setTotalDeposited(newDeposited);
+        setNoctisBalance(newBalance);
+      }
     } catch (err: any) {
       setError(err.message || "Faucet claim failed");
     } finally {
@@ -443,6 +468,84 @@ export default function EmployerDashboard() {
       setIsSubmitting(false);
     }
   }, [csvData, totalAmount]);
+
+  // ─── Quick Payroll (dev mode — no ZK, no CSV) ─────────────────
+  const handleAddQuickRecipient = useCallback(() => {
+    const addr = quickAddress.trim();
+    const amt = quickAmount.trim();
+    const dur = parseInt(quickDuration, 10);
+    if (!addr) { setError("Address is required"); return; }
+    if (!amt || BigInt(amt) <= 0n) { setError("Amount must be > 0"); return; }
+    if (isNaN(dur) || dur <= 0) { setError("Duration must be > 0 seconds"); return; }
+
+    setQuickRecipients(prev => [...prev, { address: addr, amount: amt, duration_secs: dur }]);
+    setQuickAddress("");
+    setQuickAmount("");
+    setQuickDuration("86400");
+    setError(null);
+  }, [quickAddress, quickAmount, quickDuration]);
+
+  const handleRemoveQuickRecipient = useCallback((index: number) => {
+    setQuickRecipients(prev => prev.filter((_, i) => i !== index));
+  }, []);
+
+  const handleQuickSubmit = useCallback(async () => {
+    if (quickRecipients.length === 0) {
+      setError("Add at least one recipient first");
+      return;
+    }
+
+    setIsQuickSubmitting(true);
+    setError(null);
+    setSuccess(null);
+
+    try {
+      const address = sessionStorage.getItem("noctis_wallet_address");
+      if (!address) throw new Error("Wallet not connected");
+
+      const recipients = quickRecipients.map(r => ({
+        address: r.address,
+        amount: r.amount,
+        duration_secs: r.duration_secs || 86400,
+      }));
+
+      // Calculate total
+      const total = recipients.reduce((sum, r) => sum + BigInt(r.amount), BigInt(0));
+      const totalAmt = total.toString();
+
+      // 1. Compute SHA256 Merkle root (matches contract, no snarkjs/circomlibjs)
+      const merkleRoot = await computeSha256MerkleRoot(recipients);
+
+      // 2. Build mock proof (384-byte identity points)
+      const proofBytes = buildMockProof();
+
+      // 3. Compute dev nullifiers
+      const rootHex = Array.from(merkleRoot).map(b => b.toString(16).padStart(2, "0")).join("");
+      const nullifiers = await computeDevNullifiers(address, rootHex, recipients.length);
+
+      // 4. Submit via dispatcher
+      const dispatcherClient = new PayrollDispatcherClient();
+      await dispatcherClient.processBatch(
+        address,
+        address,
+        recipients,
+        totalAmt,
+        merkleRoot,
+        proofBytes,
+        nullifiers,
+      );
+
+      setSuccess(
+        `Payroll batch submitted (dev mode) for ${recipients.length} recipient(s)! ` +
+        `Total: ${formatAmount(totalAmt)} units`
+      );
+      setQuickRecipients([]);
+    } catch (err: any) {
+      setError(err.message || "Failed to submit quick payroll");
+    } finally {
+      setIsQuickSubmitting(false);
+    }
+  }, [quickRecipients]);
 
   // ─── Policy Token / Signer helpers ────────────────────────────
   const handleAddToken = useCallback(() => {
@@ -641,10 +744,17 @@ export default function EmployerDashboard() {
               </div>
             ) : (
               <>
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
+                <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mb-8">
+                  <OverviewCard
+                    label="NOCTIS Balance"
+                    value={formatAmount(noctisBalance)}
+                    accent={Number(noctisBalance) > 0}
+                    subtext="wallet"
+                  />
                   <OverviewCard
                     label="Total Deposited"
                     value={formatAmount(totalDeposited)}
+                    subtext="in vaults"
                   />
                   <OverviewCard
                     label="Batches Processed"
@@ -827,129 +937,292 @@ export default function EmployerDashboard() {
         {/* ═══ PAYROLL TAB ════ */}
         {activeTab === "payroll" && (
           <div>
-            <h2 className="text-lg font-bold mb-4">Run Payroll</h2>
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-lg font-bold">Run Payroll</h2>
+              {/* Mode toggle */}
+              <button
+                onClick={() => setQuickMode(!quickMode)}
+                className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors border ${
+                  quickMode
+                    ? "bg-accent/20 border-accent/40 text-accent"
+                    : "bg-surface-lighter border-surface-lighter text-text-muted"
+                }`}
+              >
+                {quickMode ? "⚡ Quick Mode (dev)" : "Switch to Quick Mode"}
+              </button>
+            </div>
 
-            {/* CSV Upload */}
-            <div className="p-6 rounded-xl bg-surface-light border border-surface-lighter mb-6">
-              <h3 className="font-semibold mb-3">1. Upload Employee CSV</h3>
-              <p className="text-xs text-text-muted mb-4">
-                CSV format: <code className="text-primary">address, amount, duration_secs</code>
-                {" "}(duration_secs optional, defaults to 86400 = 1 day)
-              </p>
+            {quickMode ? (
+              /* ═══ QUICK MODE (no CSV, no ZK) ═══ */
+              <div>
+                {/* Quick mode info */}
+                <div className="mb-4 p-3 rounded-xl bg-accent/10 border border-accent/20 text-xs text-text-muted">
+                  <span className="font-semibold text-accent">⚡ Quick Mode</span>
+                  {" — "}Uses a mock ZK proof + SHA256 Merkle root. No CSV upload or
+                  snarkjs/circomlibjs needed. For development/testing only.
+                </div>
 
-              <div className="flex items-center gap-4">
-                <input
-                  ref={fileInputRef}
-                  type="file"
-                  accept=".csv"
-                  onChange={handleFileUpload}
-                  className="block w-full text-sm text-text-muted
-                    file:mr-4 file:py-2 file:px-4
-                    file:rounded-lg file:border-0
-                    file:text-sm file:font-semibold
-                    file:bg-primary file:text-white
-                    hover:file:bg-primary-dark
-                    file:cursor-pointer file:transition-colors
-                    cursor-pointer"
-                />
-              </div>
+                {/* Inline form */}
+                <div className="p-6 rounded-xl bg-surface-light border border-surface-lighter mb-6">
+                  <h3 className="font-semibold mb-3">Add Recipient</h3>
+                  <div className="grid grid-cols-1 md:grid-cols-4 gap-3 mb-3">
+                    <div className="md:col-span-2">
+                      <label className="block text-xs text-text-muted mb-1">Stellar Address (G...)</label>
+                      <input
+                        type="text"
+                        value={quickAddress}
+                        onChange={e => setQuickAddress(e.target.value)}
+                        placeholder="GABCDEF123..."
+                        className="w-full px-3 py-2 rounded-lg bg-surface border border-surface-lighter text-sm font-mono focus:outline-none focus:border-primary"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs text-text-muted mb-1">Amount (NOCTIS)</label>
+                      <input
+                        type="text"
+                        value={quickAmount}
+                        onChange={e => setQuickAmount(e.target.value)}
+                        placeholder="1000"
+                        className="w-full px-3 py-2 rounded-lg bg-surface border border-surface-lighter text-sm focus:outline-none focus:border-primary"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs text-text-muted mb-1">Duration (sec)</label>
+                      <input
+                        type="text"
+                        value={quickDuration}
+                        onChange={e => setQuickDuration(e.target.value)}
+                        placeholder="86400"
+                        className="w-full px-3 py-2 rounded-lg bg-surface border border-surface-lighter text-sm focus:outline-none focus:border-primary"
+                      />
+                    </div>
+                  </div>
+                  <button
+                    onClick={handleAddQuickRecipient}
+                    className="px-4 py-2 rounded-lg bg-accent hover:bg-accent/80 text-white text-sm font-semibold transition-colors"
+                  >
+                    + Add Recipient
+                  </button>
+                </div>
 
-              {csvData.length > 0 && (
-                <div className="mt-4">
-                  <p className="text-sm text-text-muted mb-2">
-                    {csvData.length} recipient(s) loaded · Total:{" "}
-                    <span className="text-success font-semibold">
-                      {formatAmount(totalAmount)}
-                    </span>{" "}
-                    units
-                  </p>
-                  <div className="max-h-40 overflow-y-auto rounded-lg border border-surface-lighter">
-                    <table className="w-full text-xs">
-                      <thead className="bg-surface-lighter">
-                        <tr>
-                          <th className="px-3 py-2 text-left text-text-muted">Address</th>
-                          <th className="px-3 py-2 text-right text-text-muted">Amount</th>
-                          <th className="px-3 py-2 text-right text-text-muted">Duration</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {csvData.map((r, i) => (
-                          <tr key={i} className="border-t border-surface-lighter">
-                            <td className="px-3 py-2 font-mono">
-                              {truncateAddress(r.address)}
-                            </td>
-                            <td className="px-3 py-2 text-right font-mono">
-                              {formatAmount(r.amount)}
-                            </td>
-                            <td className="px-3 py-2 text-right">
-                              {r.duration_secs}s
-                            </td>
+                {/* Recipient list */}
+                {quickRecipients.length > 0 && (
+                  <div className="p-6 rounded-xl bg-surface-light border border-surface-lighter mb-6">
+                    <h3 className="font-semibold mb-3">
+                      Recipients ({quickRecipients.length})
+                    </h3>
+                    <div className="max-h-48 overflow-y-auto rounded-lg border border-surface-lighter">
+                      <table className="w-full text-xs">
+                        <thead className="bg-surface-lighter">
+                          <tr>
+                            <th className="px-3 py-2 text-left text-text-muted">Address</th>
+                            <th className="px-3 py-2 text-right text-text-muted">Amount</th>
+                            <th className="px-3 py-2 text-right text-text-muted">Duration</th>
+                            <th className="px-3 py-2 text-right text-text-muted"></th>
                           </tr>
-                        ))}
-                      </tbody>
-                    </table>
+                        </thead>
+                        <tbody>
+                          {quickRecipients.map((r, i) => (
+                            <tr key={i} className="border-t border-surface-lighter">
+                              <td className="px-3 py-2 font-mono">{truncateAddress(r.address)}</td>
+                              <td className="px-3 py-2 text-right font-mono">{formatAmount(r.amount)}</td>
+                              <td className="px-3 py-2 text-right">{r.duration_secs}s</td>
+                              <td className="px-3 py-2 text-right">
+                                <button
+                                  onClick={() => handleRemoveQuickRecipient(i)}
+                                  className="text-error hover:text-error/80 text-xs font-semibold"
+                                >
+                                  Remove
+                                </button>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                    <p className="text-xs text-text-muted mt-2">
+                      Total: <span className="text-success font-semibold">
+                        {formatAmount(quickRecipients.reduce((s, r) => s + BigInt(r.amount), BigInt(0)).toString())}
+                      </span> NOCTIS
+                    </p>
+                  </div>
+                )}
+
+                {/* Quick submit */}
+                <div className="p-6 rounded-xl bg-surface-light border border-surface-lighter">
+                  <h3 className="font-semibold mb-3">Submit Payroll (Dev Mode)</h3>
+                  <p className="text-xs text-text-muted mb-4">
+                    Uses a mock ZK proof + SHA256 Merkle tree (matching the contract algorithm).
+                    You&apos;ll need to sign with Freighter.
+                  </p>
+                  <div className="flex items-center gap-3">
+                    <button
+                      onClick={handleQuickSubmit}
+                      disabled={quickRecipients.length === 0 || isQuickSubmitting}
+                      className={`px-6 py-2.5 rounded-lg text-sm font-semibold transition-colors ${
+                        quickRecipients.length > 0 && !isQuickSubmitting
+                          ? "bg-accent hover:bg-accent/80 text-white"
+                          : "bg-surface-lighter text-text-muted cursor-not-allowed"
+                      }`}
+                    >
+                      {isQuickSubmitting ? (
+                        <span className="flex items-center gap-2">
+                          <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white" />
+                          Submitting...
+                        </span>
+                      ) : (
+                        `⚡ Quick Submit (${quickRecipients.length} recipient${quickRecipients.length !== 1 ? "s" : ""})`
+                      )}
+                    </button>
+                    {quickRecipients.length > 0 && (
+                      <button
+                        onClick={() => setQuickRecipients([])}
+                        className="px-4 py-2.5 rounded-lg border border-surface-lighter hover:border-error/50 text-sm text-text-muted hover:text-error transition-colors"
+                      >
+                        Clear All
+                      </button>
+                    )}
                   </div>
                 </div>
-              )}
-            </div>
 
-            {/* Submit */}
-            <div className="p-6 rounded-xl bg-surface-light border border-surface-lighter">
-              <h3 className="font-semibold mb-3">2. Submit Payroll</h3>
-              <p className="text-xs text-text-muted mb-4">
-                This will prepare a batch transaction. You&apos;ll need to sign
-                it with your wallet to submit to the Stellar testnet.
-              </p>
+                {/* Quick mode info */}
+                <div className="mt-6 p-4 rounded-xl bg-accent/5 border border-accent/10 text-xs text-text-muted">
+                  <p className="font-semibold text-accent mb-1">How Quick Mode works</p>
+                  <ol className="list-decimal list-inside space-y-1">
+                    <li>Enter recipient addresses, amounts, and stream durations manually</li>
+                    <li>A SHA256 Merkle root is computed (matching the on-chain algorithm)</li>
+                    <li>A 384-byte mock proof (identity points) is used instead of a real ZK proof</li>
+                    <li>The batch is submitted to the PayrollDispatcher contract</li>
+                    <li><strong>Note:</strong> The contract must have the verification key set to pass the proof check</li>
+                  </ol>
+                </div>
+              </div>
+            ) : (
+              /* ═══ CSV + ZK MODE (existing) ═══ */
+              <>
+              {/* CSV Upload */}
+              <div className="p-6 rounded-xl bg-surface-light border border-surface-lighter mb-6">
+                <h3 className="font-semibold mb-3">1. Upload Employee CSV</h3>
+                <p className="text-xs text-text-muted mb-4">
+                  CSV format: <code className="text-primary">address, amount, duration_secs</code>
+                  {" "}(duration_secs optional, defaults to 86400 = 1 day)
+                </p>
 
-              <div className="flex items-center gap-3">
-                <button
-                  onClick={handleSubmitPayroll}
-                  disabled={csvData.length === 0 || isSubmitting}
-                  className={`px-6 py-2.5 rounded-lg text-sm font-semibold transition-colors ${
-                    csvData.length > 0 && !isSubmitting
-                      ? "bg-primary hover:bg-primary-dark text-white"
-                      : "bg-surface-lighter text-text-muted cursor-not-allowed"
-                  }`}
-                >
-                  {isSubmitting ? (
-                    <span className="flex items-center gap-2">
-                      <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white" />
-                      Processing...
-                    </span>
-                  ) : csvData.length === 0 ? (
-                    "Upload CSV First"
-                  ) : (
-                    `Submit Payroll (${csvData.length} employees)`
-                  )}
-                </button>
+                <div className="flex items-center gap-4">
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    accept=".csv"
+                    onChange={handleFileUpload}
+                    className="block w-full text-sm text-text-muted
+                      file:mr-4 file:py-2 file:px-4
+                      file:rounded-lg file:border-0
+                      file:text-sm file:font-semibold
+                      file:bg-primary file:text-white
+                      hover:file:bg-primary-dark
+                      file:cursor-pointer file:transition-colors
+                      cursor-pointer"
+                  />
+                </div>
 
                 {csvData.length > 0 && (
-                  <button
-                    onClick={() => {
-                      setCsvData([]);
-                      setCsvFileName("");
-                      setTotalAmount("0");
-                      if (fileInputRef.current) fileInputRef.current.value = "";
-                    }}
-                    className="px-4 py-2.5 rounded-lg border border-surface-lighter hover:border-error/50 text-sm text-text-muted hover:text-error transition-colors"
-                  >
-                    Clear
-                  </button>
+                  <div className="mt-4">
+                    <p className="text-sm text-text-muted mb-2">
+                      {csvData.length} recipient(s) loaded · Total:{" "}
+                      <span className="text-success font-semibold">
+                        {formatAmount(totalAmount)}
+                      </span>{" "}
+                      units
+                    </p>
+                    <div className="max-h-40 overflow-y-auto rounded-lg border border-surface-lighter">
+                      <table className="w-full text-xs">
+                        <thead className="bg-surface-lighter">
+                          <tr>
+                            <th className="px-3 py-2 text-left text-text-muted">Address</th>
+                            <th className="px-3 py-2 text-right text-text-muted">Amount</th>
+                            <th className="px-3 py-2 text-right text-text-muted">Duration</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {csvData.map((r, i) => (
+                            <tr key={i} className="border-t border-surface-lighter">
+                              <td className="px-3 py-2 font-mono">
+                                {truncateAddress(r.address)}
+                              </td>
+                              <td className="px-3 py-2 text-right font-mono">
+                                {formatAmount(r.amount)}
+                              </td>
+                              <td className="px-3 py-2 text-right">
+                                {r.duration_secs}s
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
                 )}
               </div>
-            </div>
 
-            {/* Info box */}
-            <div className="mt-6 p-4 rounded-xl bg-primary/5 border border-primary/10 text-xs text-text-muted">
-              <p className="font-semibold text-primary mb-1">How it works</p>
-              <ol className="list-decimal list-inside space-y-1">
-                <li>Upload a CSV with employee addresses and amounts</li>
-                <li>The system computes a Merkle root of the payroll data</li>
-                <li>A zero-knowledge proof is generated for privacy</li>
-                <li>The batch transaction is sent to the PayrollDispatcher contract</li>
-                <li>Each employee gets a per-second streaming payment stream</li>
-              </ol>
-            </div>
+              {/* Submit */}
+              <div className="p-6 rounded-xl bg-surface-light border border-surface-lighter">
+                <h3 className="font-semibold mb-3">2. Submit Payroll</h3>
+                <p className="text-xs text-text-muted mb-4">
+                  This will prepare a batch transaction. You&apos;ll need to sign
+                  it with your wallet to submit to the Stellar testnet.
+                </p>
+
+                <div className="flex items-center gap-3">
+                  <button
+                    onClick={handleSubmitPayroll}
+                    disabled={csvData.length === 0 || isSubmitting}
+                    className={`px-6 py-2.5 rounded-lg text-sm font-semibold transition-colors ${
+                      csvData.length > 0 && !isSubmitting
+                        ? "bg-primary hover:bg-primary-dark text-white"
+                        : "bg-surface-lighter text-text-muted cursor-not-allowed"
+                    }`}
+                  >
+                    {isSubmitting ? (
+                      <span className="flex items-center gap-2">
+                        <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white" />
+                        Processing...
+                      </span>
+                    ) : csvData.length === 0 ? (
+                      "Upload CSV First"
+                    ) : (
+                      `Submit Payroll (${csvData.length} employees)`
+                    )}
+                  </button>
+
+                  {csvData.length > 0 && (
+                    <button
+                      onClick={() => {
+                        setCsvData([]);
+                        setCsvFileName("");
+                        setTotalAmount("0");
+                        if (fileInputRef.current) fileInputRef.current.value = "";
+                      }}
+                      className="px-4 py-2.5 rounded-lg border border-surface-lighter hover:border-error/50 text-sm text-text-muted hover:text-error transition-colors"
+                    >
+                      Clear
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              {/* Info box */}
+              <div className="mt-6 p-4 rounded-xl bg-primary/5 border border-primary/10 text-xs text-text-muted">
+                <p className="font-semibold text-primary mb-1">How it works</p>
+                <ol className="list-decimal list-inside space-y-1">
+                  <li>Upload a CSV with employee addresses and amounts</li>
+                  <li>The system computes a Merkle root of the payroll data</li>
+                  <li>A zero-knowledge proof is generated for privacy</li>
+                  <li>The batch transaction is sent to the PayrollDispatcher contract</li>
+                  <li>Each employee gets a per-second streaming payment stream</li>
+                </ol>
+              </div>
+              </>
+            )}
           </div>
         )}
 
@@ -1306,10 +1579,12 @@ function OverviewCard({
   label,
   value,
   accent,
+  subtext,
 }: {
   label: string;
   value: string;
   accent?: boolean;
+  subtext?: string;
 }) {
   return (
     <div className="p-4 rounded-xl bg-surface-light border border-surface-lighter">
@@ -1321,6 +1596,9 @@ function OverviewCard({
       >
         {value}
       </p>
+      {subtext && (
+        <p className="text-[10px] text-text-muted mt-0.5">{subtext}</p>
+      )}
     </div>
   );
 }

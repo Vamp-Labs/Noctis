@@ -53,31 +53,6 @@ function clearSession() {
   Object.values(STORAGE_KEYS).forEach((key) => sessionStorage.removeItem(key));
 }
 
-// ─── Freighter Wallet Detection ──────────────────────────────────
-declare global {
-  interface Window {
-    stellar?: {
-      isConnected: () => Promise<{ isConnected: boolean }>;
-      getPublicKey: () => Promise<string>;
-      signTransaction: (tx: string, opts?: any) => Promise<string>;
-    };
-    freighter?: {
-      isConnected: () => Promise<{ isConnected: boolean }>;
-      getPublicKey: () => Promise<string>;
-      signTransaction: (tx: string, opts?: any) => Promise<string>;
-    };
-  }
-}
-
-/**
- * Get the Freighter API object — checks both window.stellar and window.freighter.
- * Freighter versions vary on which namespace they inject.
- */
-function getFreighterApi(): Window["stellar"] | Window["freighter"] | null {
-  if (typeof window === "undefined") return null;
-  return window.stellar || window.freighter || null;
-}
-
 // ─── Passkey Kit Interface ───────────────────────────────────────
 interface PasskeyKitInterface {
   register: (opts: { username: string; displayName: string }) => Promise<{
@@ -143,11 +118,10 @@ export function useWallet() {
   const checkFreighterConnection = async () => {
     if (typeof window === "undefined") return;
     try {
-      const api = getFreighterApi();
-      if (api) {
-        const { isConnected } = await api.isConnected();
-        if (isConnected) {
-          const pubkey = await api.getPublicKey();
+      const { isConnected: freighterIsConnected } = await isConnected();
+      if (freighterIsConnected) {
+        const { address: pubkey } = await requestAccess();
+        if (pubkey) {
           setState((s) => ({
             ...s,
             address: pubkey,
@@ -157,7 +131,7 @@ export function useWallet() {
         }
       }
     } catch {
-      // Freighter not installed
+      // Freighter not installed or not allowed
     }
   };
 

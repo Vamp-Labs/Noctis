@@ -10,7 +10,7 @@ interface ClaimResponse {
   tx_hash?: string;
   amount?: string;
   token?: string;
-  xlm_funded?: boolean;
+  xlm_status?: "funded" | "already_funded" | "failed";
   message?: string;
   error?: string;
 }
@@ -18,6 +18,9 @@ interface ClaimResponse {
 // ─── Configuration ────────────────────────────────────────────────
 const FAUCET_AMOUNT = "100000"; // 100,000 NOCTIS
 const NOCTIS_TOKEN = "CDMM3QPRZKQDOXSG3BJMXLBXVYAVAN5NGUJOVVXDEGB4YHNU44V54OYI";
+const NOCTIS_ASSET_CODE = "NOCTIS";
+const NOCTIS_ISSUER = "GDTJ5ITQCKMEI7QZSBCYQA5FMNCKCAFTXTMN44CLJ5BITU5R4T53XQQX";
+const HORIZON_URL = "https://horizon-testnet.stellar.org";
 const FRIENDBOT_URL = "https://friendbot.stellar.org";
 const ADMIN_SECRET = process.env.FAUCET_ADMIN_SECRET;
 const RPC_URL = "https://soroban-testnet.stellar.org";
@@ -68,14 +71,15 @@ async function mintTokens(wallet: string): Promise<string> {
     .setTimeout(30)
     .build();
 
-  // 5. Simulate
+  // 5. Simulate (single call — avoids double-simulation issues)
   const simResult: any = await server.simulateTransaction(tx);
   if (simResult.error) {
     throw new Error(`Simulate error: ${simResult.error}`);
   }
 
-  // 6. Prepare (assemble with auth)
-  const preparedTx = await server.prepareTransaction(tx);
+  // 6. Assemble with auth using the simulation result directly
+  //    (avoid server.prepareTransaction which re-simulates internally)
+  const preparedTx = rpc.assembleTransaction(tx, simResult).build();
 
   // 7. Sign
   preparedTx.sign(adminKeypair);
@@ -106,15 +110,50 @@ async function mintTokens(wallet: string): Promise<string> {
 }
 
 /**
- * Fund a wallet with testnet XLM via Friendbot.
+ * Check if a wallet has a NOCTIS trustline via Horizon.
  */
-async function fundXlm(wallet: string): Promise<boolean> {
+async function checkTrustline(wallet: string): Promise<boolean> {
   try {
-    const response = await fetch(`${FRIENDBOT_URL}?addr=${wallet}`);
-    const json = await response.json();
-    return json.checksum !== undefined;
+    const resp = await fetch(`${HORIZON_URL}/accounts/${wallet}`);
+    if (!resp.ok) return false;
+    const data: any = await resp.json();
+    const balances: any[] = data.balances || [];
+    return balances.some(
+      (b: any) =>
+        b.asset_type !== "native" &&
+        b.asset_code === NOCTIS_ASSET_CODE &&
+        b.asset_issuer === NOCTIS_ISSUER
+    );
   } catch {
     return false;
+  }
+}
+
+/**
+ * Fund a wallet with testnet XLM via Friendbot.
+ * Returns "funded" on success, "already_funded" if account exists, or "failed".
+ */
+async function fundXlm(wallet: string): Promise<"funded" | "already_funded" | "failed"> {
+  try {
+    const response = await fetch(`${FRIENDBOT_URL}?addr=${wallet}`);
+
+    // 201 = created (fresh fund). 400 = "already funded" — expected, not an error.
+    if (response.status === 400) {
+      const body = await response.json();
+      console.log(`Friendbot: ${body.detail || "already funded"} (${wallet})`);
+      return "already_funded";
+    }
+
+    if (!response.ok) {
+      console.error(`Friendbot error: ${response.status} ${await response.text()}`);
+      return "failed";
+    }
+
+    const json = await response.json();
+    return json.checksum !== undefined ? "funded" : "failed";
+  } catch (err) {
+    console.error("Friendbot network error:", err);
+    return "failed";
   }
 }
 
@@ -166,23 +205,44 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // 5. Fund XLM first (need XLM for transaction fees)
-    const xlmFunded = await fundXlm(wallet);
+    // 5. Check NOCTIS trustline (SAC mint() requires recipient trustline)
+    const hasTrust = await checkTrustline(wallet);
+    if (!hasTrust) {
+      return NextResponse.json(
+        {
+          ...response,
+          error:
+            "No NOCTIS trustline found. Open Freighter, add trustline for " +
+            `${NOCTIS_ASSET_CODE} (issuer: ${NOCTIS_ISSUER}), then try again.`,
+        },
+        { status: 400 }
+      );
+    }
 
-    // 6. Mint NOCTIS tokens
+    // 6. Fund XLM first (need XLM for transaction fees on future txs)
+    const xlmStatus = await fundXlm(wallet);
+
+    // 7. Mint NOCTIS tokens
     const txHash = await mintTokens(wallet);
 
-    // 7. Record claim
+    // 8. Record claim
     claimedWallets.add(wallet);
     claimCount++;
+
+    const xlmMsg =
+      xlmStatus === "funded"
+        ? "10,000 XLM funded"
+        : xlmStatus === "already_funded"
+        ? "XLM already present"
+        : "XLM funding unavailable";
 
     return NextResponse.json({
       success: true,
       tx_hash: txHash,
       amount: FAUCET_AMOUNT,
       token: NOCTIS_TOKEN,
-      xlm_funded: xlmFunded,
-      message: `Successfully claimed ${FAUCET_AMOUNT} NOCTIS + ${xlmFunded ? "10,000 XLM" : "XLM funding skipped (already funded)"}`,
+      xlm_status: xlmStatus,
+      message: `Claimed ${FAUCET_AMOUNT} NOCTIS (${xlmMsg})`,
     });
 
   } catch (err: any) {

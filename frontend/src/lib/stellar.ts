@@ -5,10 +5,11 @@ import {
   nativeToScVal,
   scValToNative,
   xdr,
-  Networks,
   Account,
+  Transaction,
   TransactionBuilder,
 } from "@stellar/stellar-sdk";
+import { signTransaction, isConnected } from "@stellar/freighter-api";
 import { STELLAR_NETWORK, CONTRACT_ADDRESSES } from "@/types";
 
 // ─── RPC Client ──────────────────────────────────────────────────
@@ -137,8 +138,12 @@ export class ContractClient {
   }
 
   /**
-   * Full write flow: prepare → sign with Freighter → poll for completion
-   * Returns the transaction hash and the result value (if available)
+   * Full write flow: simulate → assemble → sign with Freighter → poll for completion
+   * Returns the transaction hash and success status.
+   *
+   * NOTE: We use a SINGLE simulateTransaction call followed by assembleTransaction
+   * directly (instead of server.prepareTransaction which re-simulates internally).
+   * This avoids double-simulation race conditions and makes diagnostics easier.
    */
   async writeWithFreighter(
     sourceAddress: string,
@@ -148,23 +153,52 @@ export class ContractClient {
     if (this.networkPassphrase !== "Test SDF Network ; September 2015") {
       throw new Error("MAINNET BLOCKED: This application is testnet-only. Set STELLAR_NETWORK=TESTNET.");
     }
+
     // 1. Prepare the transaction
     const account = await getCachedAccount(sourceAddress);
     const tx = this.buildInvocationTx(account, method, ...args);
+
+    // 2. Simulate (single call — avoids second simulation race conditions)
     const simResult: any = await server.simulateTransaction(tx);
 
     if (simResult.error) {
       throw new Error(`Simulate error (${method}): ${simResult.error}`);
     }
 
-    // 2. Assemble the transaction with auth/soroban data
-    const assembledTx = await server.prepareTransaction(tx);
+    // 3. Assemble the transaction with auth/soroban data
+    //    We use rpc.assembleTransaction directly with the simulation result
+    //    to avoid server.prepareTransaction's internal re-simulation.
+    let assembledTx: Transaction;
+    try {
+      // assembleTransaction takes (raw_transaction, simulation_result)
+      // and returns a TransactionBuilder — call .build() to get the Transaction
+      assembledTx = rpc.assembleTransaction(tx, simResult).build();
+    } catch (assemblyErr: any) {
+      // Diagnostic logging — capture raw XDR and attempt manual decode
+      console.error(`[writeWithFreighter] assembleTransaction failed for ${method}:`, assemblyErr.message);
+      if (simResult.results?.length > 0) {
+        const rowXdr = simResult.results[0]?.xdr;
+        if (rowXdr) {
+          console.error(`[writeWithFreighter] result.xdr (first 200 chars):`, rowXdr.substring(0, 200));
+          try {
+            // Attempt isolated decode to see the ScVal type
+            const decoded = xdr.ScVal.fromXDR(rowXdr, "base64");
+            console.error(`[writeWithFreighter] MANUAL DECODE SUCCEEDED — type:`, decoded.switch().name);
+          } catch (xdrErr: any) {
+            console.error(`[writeWithFreighter] MANUAL DECODE FAILED:`, xdrErr.message);
+          }
+        }
+      }
+      throw new Error(
+        `Transaction assembly failed for ${method}. ` +
+        `This may indicate a contract return-type mismatch or SDK/protocol version incompatibility. ` +
+        `Check browser console for diagnostic XDR details.`
+      );
+    }
 
-    // 3. Sign with Freighter (check both window.stellar and window.freighter)
-    const freighterApi = (typeof window !== "undefined")
-      ? (window as any).stellar || (window as any).freighter
-      : null;
-    if (!freighterApi) {
+    // 4. Sign with Freighter via @stellar/freighter-api
+    const hasExtension = await isConnected();
+    if (!hasExtension) {
       throw new Error(
         "Freighter wallet not detected. Make sure:\n" +
         "1. Freighter extension is installed (freighter.app)\n" +
@@ -173,20 +207,21 @@ export class ContractClient {
         "If it still doesn't work, try refreshing the page."
       );
     }
-    const signedXdr = await freighterApi.signTransaction(
+
+    const { signedTxXdr } = await signTransaction(
       assembledTx.toXDR(),
       { networkPassphrase: this.networkPassphrase }
     );
 
-    // 4. Send
-    const signedTx = TransactionBuilder.fromXDR(signedXdr, this.networkPassphrase);
+    // 5. Send
+    const signedTx = TransactionBuilder.fromXDR(signedTxXdr, this.networkPassphrase);
     const sendResult = await server.sendTransaction(signedTx);
 
     if (sendResult.status === "ERROR") {
       throw new Error(`Transaction failed: ${sendResult.errorResult?.result().toString()}`);
     }
 
-    // 5. Poll for completion
+    // 6. Poll for completion
     const hash = sendResult.hash;
     let status: string = sendResult.status;
     let attempts = 0;

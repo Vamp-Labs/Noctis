@@ -60,7 +60,21 @@ declare global {
       getPublicKey: () => Promise<string>;
       signTransaction: (tx: string, opts?: any) => Promise<string>;
     };
+    freighter?: {
+      isConnected: () => Promise<{ isConnected: boolean }>;
+      getPublicKey: () => Promise<string>;
+      signTransaction: (tx: string, opts?: any) => Promise<string>;
+    };
   }
+}
+
+/**
+ * Get the Freighter API object — checks both window.stellar and window.freighter.
+ * Freighter versions vary on which namespace they inject.
+ */
+function getFreighterApi(): Window["stellar"] | Window["freighter"] | null {
+  if (typeof window === "undefined") return null;
+  return window.stellar || window.freighter || null;
 }
 
 // ─── Passkey Kit Interface ───────────────────────────────────────
@@ -128,10 +142,11 @@ export function useWallet() {
   const checkFreighterConnection = async () => {
     if (typeof window === "undefined") return;
     try {
-      if (window.stellar) {
-        const { isConnected } = await window.stellar.isConnected();
+      const api = getFreighterApi();
+      if (api) {
+        const { isConnected } = await api.isConnected();
         if (isConnected) {
-          const pubkey = await window.stellar.getPublicKey();
+          const pubkey = await api.getPublicKey();
           setState((s) => ({
             ...s,
             address: pubkey,
@@ -166,16 +181,21 @@ export function useWallet() {
   const connectFreighter = useCallback(async () => {
     setState((s) => ({ ...s, isConnecting: true, error: null }));
     try {
-      if (!window.stellar) {
+      const api = getFreighterApi();
+      if (!api) {
         throw new Error(
-          "Freighter wallet not detected. Install from freighter.app"
+          "Freighter wallet not detected. Make sure:\n" +
+          "1. Freighter extension is installed (freighter.app)\n" +
+          "2. You're using HTTPS or localhost\n" +
+          "3. Freighter has permission on this site (click extension → settings → allow this site)\n" +
+          "If it still doesn't work, try refreshing the page."
         );
       }
-      const { isConnected } = await window.stellar.isConnected();
+      const { isConnected } = await api.isConnected();
       if (!isConnected) {
-        await window.stellar.getPublicKey(); // triggers connection prompt
+        await api.getPublicKey(); // triggers connection prompt
       }
-      const pubkey = await window.stellar.getPublicKey();
+      const pubkey = await api.getPublicKey();
       persistState(pubkey, false);
       setState({
         address: pubkey,

@@ -160,11 +160,20 @@ export class ContractClient {
     // 2. Assemble the transaction with auth/soroban data
     const assembledTx = await server.prepareTransaction(tx);
 
-    // 3. Sign with Freighter
-    if (typeof window === "undefined" || !(window as any).stellar) {
-      throw new Error("Freighter wallet not detected");
+    // 3. Sign with Freighter (check both window.stellar and window.freighter)
+    const freighterApi = (typeof window !== "undefined")
+      ? (window as any).stellar || (window as any).freighter
+      : null;
+    if (!freighterApi) {
+      throw new Error(
+        "Freighter wallet not detected. Make sure:\n" +
+        "1. Freighter extension is installed (freighter.app)\n" +
+        "2. You're using HTTPS or localhost\n" +
+        "3. Freighter has permission on this site\n" +
+        "If it still doesn't work, try refreshing the page."
+      );
     }
-    const signedXdr = await (window as any).stellar.signTransaction(
+    const signedXdr = await freighterApi.signTransaction(
       assembledTx.toXDR(),
       { networkPassphrase: this.networkPassphrase }
     );

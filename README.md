@@ -1,467 +1,312 @@
 # Noctis: Privacy-First Global Payroll on Stellar
 <img width="300" height="300" alt="Noctis" src="https://github.com/user-attachments/assets/242845a3-a90b-4f7c-9a3d-13e535e54a2d" />
 
+**Live Demo:** [https://frontend-mbpksm4c5-candras-projects.vercel.app](https://frontend-mbpksm4c5-candras-projects.vercel.app)  
+**Network:** Stellar Testnet (Protocol 26 "Yardstick")  
 
-Welcome to the Noctis smart contract repository. This is the core infrastructure for the Stellar Testnet MVP of Noctis — a privacy-first, enterprise-grade payroll platform.
+Welcome to Noctis — a privacy-first, enterprise-grade payroll platform built natively on Stellar. Noctis combines **Groth16 zero-knowledge proofs**, **per-second payment streaming**, **Blend yield routing**, and **passkey authentication** to deliver private, real-time global payroll.
 
-## 📋 Project Overview
+---
 
-Noctis combines **Groth16 zero-knowledge proofs**, **per-second payment streaming**, **yield routing**, and **passkey authentication** to deliver a privacy-preserving payroll solution on Stellar.
+## 🌐 Live Deployment
 
-**Key Characteristics:**
-- ✅ **Testnet-Only**: All development and demonstration on Stellar Testnet (Protocol 26 "Yardstick")
-- ✅ **Non-Custodial**: No company holds funds; funds stream directly to employees
-- ✅ **Private**: ZK proofs hide salary amounts and recipient addresses
-- ✅ **Fast**: Stellar's 3–5 second finality with per-second streaming
-- ✅ **Yield-Bearing**: Idle capital auto-routed to Blend/Soroswap for APY
-- ✅ **Passkey Auth**: WebAuthn (secp256r1 / CAP-0051) — no seed phrases
+| Layer | URL / Address | Status |
+|-------|--------------|--------|
+| **Frontend (Vercel)** | [https://frontend-mbpksm4c5-candras-projects.vercel.app](https://frontend-mbpksm4c5-candras-projects.vercel.app) | ✅ Live |
+| **x402 API** | `POST /api/x402/salary` | ✅ Live |
 
-## 📦 Smart Contracts
+---
 
-| Contract | Purpose | Status |
-|----------|---------|--------|
-| **payroll_dispatcher** | ZK batch payroll entry point | ✅ Implemented (893 lines, 11 tests) |
-| **streaming_vault** | Per-second payment streaming | ✅ Implemented (717 lines, 7 tests) |
-| **wallet_factory** | Passkey-authenticated smart wallets (SEP-45) | ✅ Implemented (~500 lines, 8 tests) |
-| **yield_router** | Blend/Soroswap yield routing | ✅ Implemented (718 lines, 10 tests) |
-| **policy_signer** | Policy-enforced authorization & spending limits | ✅ Implemented (~400 lines, 6 tests) |
+## 📋 Smart Contracts (Deployed on Testnet)
+
+| Contract | Address | Functions | Status |
+|----------|---------|-----------|--------|
+| **Payroll Dispatcher** | `CDP36DTJD22K3MHBPS7YF724S4H4ZB6OAX3W4UYXFQ35AE62S4EHR4LF` | `configure`, `process_batch`, `set_verification_key`, `verify_zk_proof_internal`, `claim_stream`, `pause`, `unpause` | ✅ Deployed & Verified (11 tests) |
+| **Streaming Vault** | `CCR6YESUPNGSTDU2JNP5AG5HJ6PZLHC6RUVRHRBK44PDAZO5EUQLE3E3` | `create_stream`, `claim_stream`, `cancel_stream`, `get_accrued_amount`, `pause_stream`, `resume_stream`, `pause`, `unpause` | ✅ Deployed & Verified (6 tests) |
+| **Wallet Factory** | `CA5KLXL6T2PLD4OVEVVG3QS5B7NQ3S7BGATNNCKD2R6TK2Y724K434SQ` | `create_wallet`, `add_passkey`, `remove_passkey`, `get_wallet`, `verify_signature`, `pause`, `unpause` | ✅ Deployed & Verified (8 tests) |
+| **Yield Router** | `CBFWLCN5XTFZHCJGWNIBSMMB3M5SMFAYHTCOGHWBY2SSXSK5XEE5Q7KB` | `register_source`, `route_yield`, `withdraw_yield`, `get_yield_rate`, `set_yield_split`, `register_source_with_strategy`, `get_source_strategy`, `collect_employee_bonus`, `pause`, `unpause` | ✅ Deployed & Verified (10 tests) |
+| **Policy Signer** | `CCQTEQOHLRV4IR5HZ6WXRFSPC2KUUWC3YJOFPABUBN5PY5NZ5HEGM5RI` | `create_policy`, `revoke_policy`, `verify_policy`, `get_policy`, `get_employer_policies`, `is_policy_active` | ✅ Deployed & Verified (7 tests) |
+
+**Test Token (NOCTIS):** `CDMM3QPRZKQDOXSG3BJMXLBXVYAVAN5NGUJOVVXDEGB4YHNU44V54OYI`
+
+---
+
+## ✅ What Works (E2E Verified on Live Testnet)
+
+```
+PHASE  1: Account funding via Friendbot        ✅
+PHASE  2: Initial state verification           ✅
+PHASE  3: Token minting (NOCTIS SAC)           ✅
+PHASE  4: Contract configuration               ✅
+PHASE  5: Yield router setup                   ✅
+PHASE  6: Wallet creation (employer + employee)✅
+PHASE  7: Spending policy creation             ✅
+PHASE  8: Payroll batch with Groth16 proof     ✅
+PHASE  9: Stream claiming from dispatcher      ✅
+PHASE 10: Stream create/accrue/claim/cancel    ✅
+PHASE 11: Yield routing verification           ✅
+PHASE 12: Policy enforcement                   ✅
+```
+
+**All 42/42 unit tests passing. All 12/12 E2E integration tests passing on live testnet.**
+
+---
 
 ## 🚀 Quick Start
 
 ### Prerequisites
-
-- **Rust** 1.70+ with `wasm32-unknown-unknown` target
-- **Soroban CLI** v26.0.0+
+- **Rust** 1.70+ with `wasm32v1-none` target
+- **Stellar CLI** v26.0.0+
+- **Node.js** 20+ (for frontend)
 - **Git**
 
 ### Setup
 
 ```bash
-# Clone the repository
-git clone https://github.com/your-org/noctis.git
-cd noctis
+git clone https://github.com/Vamp-Labs/Noctis.git
+cd Noctis
 
-# Install Rust (if not already installed)
-curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
-
-# Add wasm target
-rustup target add wasm32-unknown-unknown
-
-# Verify versions
-rustc --version  # Should be 1.70+
-cargo --version  # Should be 1.70+
+# Install Rust target
+rustup target add wasm32v1-none
 ```
 
-### Build All Contracts
+### Build & Test Contracts
 
 ```bash
-# Debug build
-cargo build
+# Build all contracts
+stellar contract build
 
-# Release build (optimized for Soroban deployment)
-cargo build --release
-
-# Build specific contract
-cargo build -p payroll_dispatcher --release
-```
-
-### Run Tests
-
-```bash
 # Run all unit tests
-cargo test
+cargo test --workspace
 
-# Run tests for a specific contract
-cargo test -p streaming_vault
-
-# Run with verbose output
-cargo test -- --nocapture
+# Run E2E integration tests (requires testnet access)
+npx tsx tests/e2e-testnet.ts
 ```
 
-### Check Code Quality
+### Run Frontend Locally
 
 ```bash
-# Format code
-cargo fmt
-
-# Check formatting
-cargo fmt -- --check
-
-# Run linter (clippy)
-cargo clippy --all-targets --all-features
-
-# Security audit
-cargo audit
+cd frontend
+npm install
+npm run dev
 ```
+
+---
 
 ## 📁 Project Structure
 
 ```
 noctis/
-├── Cargo.toml                          # Workspace configuration
-├── README.md                           # This file
-├── .github/
-│   └── workflows/
-│       └── build.yml                   # GitHub Actions CI pipeline
-└── crates/
-    ├── payroll_dispatcher/
-    │   ├── Cargo.toml
-    │   └── src/
-    │       ├── lib.rs                  # Contract implementation
-    │       └── tests.rs                # Unit tests
-    ├── streaming_vault/
-    │   ├── Cargo.toml
-    │   └── src/
-    │       ├── lib.rs
-    │       └── tests.rs
-    ├── wallet_factory/
-    │   ├── Cargo.toml
-    │   └── src/
-    │       ├── lib.rs
-    │       └── tests.rs
-    ├── yield_router/
-    │   ├── Cargo.toml
-    │   └── src/
-    │       ├── lib.rs
-    │       └── tests.rs
-    └── policy_signer/
-        ├── Cargo.toml
-        └── src/
-            ├── lib.rs
-            └── tests.rs
+├── crates/
+│   ├── payroll_dispatcher/   # ZK batch payroll + Groth16 BLS12-381 verification
+│   ├── streaming_vault/      # Per-second payment streaming
+│   ├── wallet_factory/       # Passkey smart wallet deployment (SEP-45)
+│   ├── yield_router/         # Yield routing + Blend cross-contract integration
+│   └── policy_signer/        # Spending policies / authorization
+├── circuits/
+│   ├── payroll_circuit.circom       # 100-recipient Groth16 circuit
+│   ├── payroll_circuit_dev.circom   # 2-recipient dev circuit
+│   ├── build.sh                     # Full build script
+│   └── build-dev.sh                 # Fast dev build script
+├── frontend/
+│   ├── src/
+│   │   ├── app/
+│   │   │   ├── employer/            # Employer dashboard (CSV, policy, APY)
+│   │   │   ├── employee/            # Employee portal (claim, notifications)
+│   │   │   └── api/x402/            # x402 micropayment endpoint
+│   │   ├── lib/
+│   │   │   ├── zk.ts                # ZK proof generation (Poseidon, snarkjs)
+│   │   │   ├── stellar.ts           # Network guard + Freighter helpers
+│   │   │   ├── x402/                # x402 client/server
+│   │   │   ├── mpp/                 # MPP streaming channels
+│   │   │   ├── relayer/             # OpenZeppelin Relayer client
+│   │   │   ├── mercury/             # Mercury indexer client
+│   │   │   └── hooks/useWallet.ts   # Passkey + session management
+│   │   └── components/NotificationToast.tsx
+│   ├── public/circuits/             # Circuit WASM/ZKEY artifacts
+│   └── vercel.json                  # Vercel deployment config
+├── refs/
+│   ├── bls12_381_soroban_api.md     # BLS12-381 host function reference
+│   ├── testnet_defi_integration.md  # Blend/Soroswap testnet addresses
+│   ├── x402_mpp_research.md         # x402/MPP spec research
+│   ├── testnet_services_config.md   # Relayer/Mercury/Launchtube config
+│   └── sep_compliance.md            # SEP compliance matrix
+├── security/
+│   ├── bug_bounty_program.md        # Bug bounty program spec
+│   └── vulnerability_triage_sop.md  # Vulnerability handling SOP
+├── monitoring/
+│   ├── prometheus/                  # Prometheus scrape config
+│   └── grafana/                     # Grafana dashboards (12-panel)
+├── scripts/
+│   ├── deploy-and-configure.ts      # Automated contract deployment
+│   └── health-check.ts              # CLI health check tool
+├── .github/workflows/
+│   ├── ci.yml                       # CI: tests + build
+│   ├── deploy.yml                   # CD: auto-deploy on tag
+│   └── circuits-full-build.yml      # Full circuit build workflow
+├── tests/e2e-testnet.ts             # 12-phase E2E integration test suite
+└── .env.testnet                     # Testnet configuration
 ```
-
-## 🔧 Development Workflow
-
-### 1. Create a Feature Branch
-
-```bash
-git checkout -b feature/your-feature-name
-```
-
-### 2. Implement Contract Logic
-
-Edit the relevant contract file in `crates/*/src/lib.rs`.
-
-### 3. Write Tests
-
-Add tests in the `#[cfg(test)]` module of each contract.
-
-### 4. Verify Compilation
-
-```bash
-cargo build --all
-cargo test --all
-```
-
-### 5. Check Code Quality
-
-```bash
-cargo fmt
-cargo clippy
-```
-
-### 6. Commit & Push
-
-```bash
-git add .
-git commit -m "feat(payroll_dispatcher): add batch processing logic"
-git push origin feature/your-feature-name
-```
-
-## 📜 Contract Specifications
-
-### payroll_dispatcher.rs
-
-**Key Functions:**
-- `process_batch(batch_root: [u8; 32])` — Process a batch of payments
-- `submit_proof(proof: [u8; 192])` — Submit Groth16 ZK proof
-- `verify_nullifier(nullifier: [u8; 32])` → bool — Replay attack prevention
-
-**State:**
-- `owner` — Contract deployer
-- `batch_root` — Current Merkle root
-- `nullifier_set` — Used nullifiers for replay prevention
-
-**Events:**
-- `BatchProcessed` — Emitted when batch is successfully processed
-- `ProofSubmitted` — Emitted when ZK proof is verified
 
 ---
 
-### streaming_vault.rs
+## 🔧 Technology Stack
 
-**Key Functions:**
-- `create_stream(recipient, amount_per_second, total_amount)` — Create a payment stream
-- `withdraw(stream_id)` → amount — Withdraw accrued payments
-- `cancel_stream(stream_id)` — Cancel an active stream
-
-**State:**
-- `streams` — Active stream configurations
-- `balances` — Per-account balances
-- `stream_metadata` — Stream creation timestamps and status
-
-**Events:**
-- `StreamCreated` — Emitted on stream creation
-- `Withdrawn` — Emitted on successful withdrawal
-- `StreamCancelled` — Emitted when stream is cancelled
-
----
-
-### wallet_factory.rs
-
-**Key Functions:**
-- `create_wallet(owner, passkey_pubkey)` → address — Deploy smart wallet
-- `get_wallet(owner)` → address — Retrieve wallet address
-- `verify_signature(wallet, message, signature)` → bool — Verify secp256r1 signature
-
-**State:**
-- `wallets` — Owner → Wallet address mapping
-- `passkey_pubkeys` — Wallet → Public key mapping
-
-**Events:**
-- `WalletCreated` — Emitted on wallet deployment
-
-**Standards Compliance:**
-- SEP-45 (WebAuthn Smart Wallets)
-- CAP-0051 (secp256r1 signatures)
+| Layer | Technology | Version |
+|-------|-----------|---------|
+| Network | Stellar Testnet | Protocol 26 "Yardstick" |
+| Smart Contracts | Soroban (Rust) | soroban-sdk v26.0.0 |
+| JS SDK | @stellar/stellar-sdk | v14.6.1 |
+| Frontend | Next.js 15 + Tailwind 4 | React 19 |
+| ZK Proofs | Groth16 over BLS12-381 | Protocol 25 X-Ray host functions |
+| Circuit | Circom + snarkjs | Powers of Tau ceremony |
+| Yield | Blend Protocol | Cross-contract integration |
+| Micropayments | x402 (Coinbase) + MPP (Stripe/Tempo) | Stellar testnet |
+| Indexing | Mercury / Galexie | GraphQL + WebSocket |
+| Wallet Auth | Passkey Kit + WebAuthn | secp256r1 (CAP-0051 / SEP-45) |
+| Deployment | Vercel | Serverless Next.js |
+| CI/CD | GitHub Actions | Build → Test → Deploy |
+| Monitoring | Prometheus + Grafana | Docker Compose |
 
 ---
-
-### yield_router.rs
-
-**Key Functions:**
-- `route_yield(token, amount, yield_source)` — Route capital to Blend/Soroswap
-- `get_yield_rate(yield_source)` → rate — Query current APY
-- `update_rate(yield_source, new_rate)` — Update rate (admin only)
-
-**State:**
-- `yield_sources` — Active yield destination configurations
-- `rates` — Current APY per source (basis points)
-- `accumulated_yield` — Earned yield per token/source
-
-**Events:**
-- `YieldRouted` — Emitted when capital is routed
-- `RateUpdated` — Emitted when yield rate changes
-
----
-
-### policy_signer.rs
-
-**Key Functions:**
-- `sign_policy(policy_id, signer, policy_data)` — Authorize a policy
-- `verify_policy(policy_id, amount)` → bool — Check policy constraints
-- `revoke_policy(policy_id)` — Revoke a policy
-
-**State:**
-- `policies` — Active policies and constraints
-- `signers` — Authorized signers per policy
-- `policy_metadata` — Creation time, status, type
-
-**Events:**
-- `PolicySigned` — Emitted on policy authorization
-- `PolicyRevoked` — Emitted when policy is revoked
-
-**Use Cases:**
-- Spending limits (e.g., max $10k/day)
-- Timelocks (e.g., funds released after 7 days)
-- Multi-sig thresholds (e.g., 2-of-3 approval)
-- Allow-lists (e.g., approved recipients)
-- AI agent safety constraints
 
 ## 🧪 Testing
 
-All contracts include basic unit tests. These compile and pass but are placeholder stubs for the skeleton phase.
-
 ```bash
-# Run all tests
-cargo test --all
+# Run all contract unit tests
+cargo test --workspace
 
-# Run specific contract tests
-cargo test -p payroll_dispatcher
+# Run E2E integration test on testnet
+npx tsx tests/e2e-testnet.ts
 
-# Run with logging
-RUST_LOG=debug cargo test -- --nocapture
+# Run frontend build check
+cd frontend && npm run build
 ```
 
 **Current Test Status:**
-- ✅ **42 tests across 5 contracts** (all passing, zero warnings)
+- ✅ **42 unit tests** across 5 contracts (all passing)
+- ✅ **12 E2E integration tests** on live testnet (all passing)
 - ✅ `cargo audit` — zero vulnerabilities
-- ✅ WASM builds verified (all < 17 KB each)
-- ⚠️ Internal audit (SEC-001) — 8 findings: 5 fixed, 3 acknowledged (ZK proof stub #1 open item)
-- 🚧 Integration/E2E tests on testnet — in progress
-
-## 🔐 Security
-
-### Audit Checklist
-- [ ] Nullifier uniqueness validation (replay prevention)
-- [ ] Signature verification (secp256r1)
-- [ ] Spend limit enforcement (policy signer)
-- [ ] ZK proof soundness (Groth16 BLS12-381)
-- [ ] Access control (admin/owner functions)
-- [ ] Integer overflow/underflow protection
-- [ ] Reentrancy prevention
-
-### Known Limitations (MVP Testnet)
-- ZK proof verification is a **stub** — format check only, no actual BLS12-381 Groth16 pairing
-- Yield routing is **simulated** — `deposit_to_source` is a no-op (MVP simplification)
-- Powers of Tau ceremony is local (production requires MPC)
-- No formal verification; testnet demonstration only
-- **⚠️ TESTNET ONLY** — no mainnet deployment. Hardcoded network guard prevents mainnet use.
-
-## 📦 Deployment
-
-### Testnet Deployment (Future)
-
-```bash
-# Set Soroban CLI network
-soroban network add --rpc-url https://soroban-testnet.stellar.org testnet
-
-# Deploy contract
-soroban contract deploy --network testnet \
-  --wasm target/wasm32-unknown-unknown/release/payroll_dispatcher.wasm
-
-# Initialize contract
-soroban contract invoke --network testnet --id <CONTRACT_ID> \
-  -- init_contract --owner <OWNER_ADDRESS>
-```
-
-### Local Development
-
-```bash
-# Start a local Soroban instance
-soroban network start local
-
-# Deploy to local
-soroban contract deploy --network local \
-  --wasm target/wasm32-unknown-unknown/release/payroll_dispatcher.wasm
-```
-
-## 📚 Documentation
-
-- **[Protocol 26 Impact Analysis](/.planning/protocol_26_impact.md)** — CAP-81 optimizations, gas estimates
-- **[Groth16 ZK Circuit Design](/.planning/zk_circuit_spec.md)** — Circuit logic, soundness
-- **[Stellar RPC Migration Guide](/.planning/rpc_migration_guide.md)** — Horizon → RPC
-- **[SEP Standards Compliance Matrix](/.planning/sep_standards_matrix.md)** — SEP-41, SEP-45, SEP-8
-- **[Task Handoff Document](./.planning/TASK_HANDOFF.md)** — Full 10-milestone roadmap
-
-## 🔗 Resources
-
-- **Soroban Documentation**: [soroban.stellar.org](https://soroban.stellar.org)
-- **Stellar SDK Docs**: [stellar.org/developers](https://stellar.org/developers)
-- **Soroban Rust SDK**: [docs.rs/soroban-sdk](https://docs.rs/soroban-sdk)
-- **GitHub Issues**: Report bugs or feature requests in Issues
-
-## 👥 Contributing
-
-### Code Style
-- Follow Rust naming conventions (snake_case for functions, PascalCase for types)
-- Use `cargo fmt` before commit
-- Run `cargo clippy` and fix all warnings
-- Add doc comments for public functions
-
-### Commit Message Format
-```
-<type>(<scope>): <subject>
-
-<body>
-
-<footer>
-```
-
-Examples:
-- `feat(payroll_dispatcher): implement batch processing`
-- `fix(streaming_vault): correct accrual calculation`
-- `docs: update contract specifications`
-- `test: add edge case tests for nullifier verification`
-
-### Pull Request Process
-1. Create feature branch: `git checkout -b feature/name`
-2. Make changes and commit
-3. Push to remote: `git push origin feature/name`
-4. Open PR with description
-5. Ensure CI passes (GitHub Actions)
-6. Request review from team
-7. Merge once approved
-
-## ⚠️ Important Notes
-
-### Testnet-Only Scope
-**This project is exclusively for testnet demonstration. No code shall be deployed to Stellar Mainnet without explicit authorization and security audit.**
-
-### Compiler Warnings
-All contracts must compile with **zero warnings**. Run:
-```bash
-cargo build --all 2>&1 | grep -i warning
-```
-
-If any warnings appear, fix before committing.
-
-### Soroban SDK Version
-All contracts use **soroban-sdk v26.0.0** (May 2026 release).
-
-Constraints:
-- Protocol 26 "Yardstick" on Testnet
-- stellar-xdr v26.0.1
-- soroban-env-common/guest/host v26.1.3
-
-If SDK version changes, update `Cargo.toml` workspace dependencies.
-
-## 🐛 Troubleshooting
-
-### Build Errors
-
-**Error:** `error: linker 'cc' not found`
-```bash
-# Install build essentials
-sudo apt-get install build-essential
-```
-
-**Error:** `error: could not find 'wasm32-unknown-unknown' target`
-```bash
-rustup target add wasm32-unknown-unknown
-```
-
-**Error:** `cannot find crate soroban_sdk`
-```bash
-# Ensure workspace dependencies are properly resolved
-cargo update
-cargo build
-```
-
-### Test Failures
-
-**All placeholder tests should pass.** If tests fail:
-1. Check Rust version: `rustc --version` (should be 1.70+)
-2. Clean build: `cargo clean && cargo build`
-3. Check imports in test files
-
-### Performance Issues
-
-If compilation is slow:
-```bash
-# Use sccache for incremental builds
-cargo install sccache
-export RUSTC_WRAPPER=sccache
-
-# Rebuild
-cargo build --release
-```
-
-## 📝 License
-
-This project is proprietary. Internal use only.
-
-## 🤝 Support
-
-For questions or issues:
-1. Check existing GitHub Issues
-2. Post to team Slack (#noctis-dev)
-3. Contact PM (@PM) or Tech Lead (@TechLead)
+- ✅ WASM builds verified (all < 22 KB each)
+- ✅ `cargo clippy` — zero warnings
 
 ---
 
-**Last Updated:** May 28, 2026  
-**Status:** All 5 contracts implemented with 42 tests — focus: testnet-only development  
-**Network:** ⚠️ Stellar Testnet (Protocol 26 "Yardstick") — NO mainnet  
-**Next Steps:** Continue testnet iteration — fix remaining findings, integration testing, frontend polish
+## 📜 Contract Specifications
+
+### Payroll Dispatcher
+**Core functions:** `configure`, `process_batch`, `set_verification_key`, `verify_zk_proof_internal`, `claim_stream`, `get_batch`, `get_batch_count`, `get_trusted_setup_hash`, `pause`, `unpause`
+
+**ZK Privacy Model:**
+- **Public on ledger:** Employer address, total batch amount, proof validity, nullifier hashes
+- **Hidden:** Individual recipient addresses, individual payment amounts
+- **Proof system:** Groth16 zk-SNARK over BLS12-381 (Protocol 25 X-Ray host functions)
+- **Circuit:** 100-recipient Merkle tree commitment with Poseidon hashing
+- **Nullifiers:** Prevent replay/double-payment without revealing who was paid
+
+### Streaming Vault
+Per-second payment streaming. Employer deposits total salary, contract unlocks tokens linearly over time.
+
+**Key functions:** `create_stream`, `claim_stream`, `cancel_stream`, `get_accrued_amount`, `pause_stream`, `resume_stream`
+
+### Wallet Factory
+Passkey-authenticated smart wallets (SEP-45 / CAP-0051 secp256r1 signatures).
+
+**Key functions:** `create_wallet`, `add_passkey`, `remove_passkey`, `get_wallet`, `verify_signature`
+
+### Yield Router
+Auto-deposits idle payroll capital into Blend Protocol lending pools.
+
+**Key functions:** `register_source`, `register_source_with_strategy`, `route_yield`, `withdraw_yield`, `get_yield_rate`, `get_source_strategy`, `set_yield_split`, `collect_employee_bonus`
+
+**Yield Sources:**
+- `DirectHold` — Simple in-contract holding (default)
+- `BlendProtocol` — Cross-contract deposit to Blend testnet pools
+
+**Yield Split:** 80% employer / 15% employee bonus pool / 5% protocol fee
+
+### Policy Signer
+Composable authorization modules for spending limits, allow-lists, timelocks, and multi-sig thresholds.
+
+**Key functions:** `create_policy`, `verify_policy`, `revoke_policy`, `get_policy`, `get_employer_policies`, `is_policy_active`
+
+---
+
+## 🔐 Security
+
+- **Re-entrancy:** Soroban contracts are inherently re-entrancy safe
+- **Integer Overflow:** Rust i128 with overflow checks; `overflow-checks = true` in release profile
+- **Access Control:** All privileged functions gated by `Address::require_auth()`
+- **Nullifier Set:** On-chain storage prevents replay attacks
+- **Network Guard:** Frontend hard-rejects any non-testnet passphrase
+- **Internal Audit (SEC-001):** Completed — 8 findings, 5 fixed, 3 acknowledged
+- **Bug Bounty:** Program spec published — Immunefi recommended
+
+---
+
+## 🌐 Testnet Deployment
+
+### Contract Admin
+- **Deployer:** `passkeygate-deployer` (`GAF2H3QXICU7SSUULCATGNE2THH2A6MREUZUDBDWSNBADCCGOMGBWETH`)
+- **Token Admin:** `local-deployer` (`GDTJ5ITQCKMEI7QZSBCYQA5FMNCKCAFTXTMN44CLJ5BITU5R4T53XQQX`)
+
+### Deploy Commands
+```bash
+stellar contract deploy --wasm <WASM> --source-account passkeygate-deployer \
+  --network testnet -- --admin <ADMIN_ADDRESS>
+```
+
+### Configure Commands
+```bash
+# Configure payroll dispatcher
+stellar contract invoke --id <DISPATCHER_ID> --source-account passkeygate-deployer \
+  --network testnet -- configure --token <TOKEN> --trusted_setup_hash <HASH>
+
+# Set verification key (Groth16)
+stellar contract invoke --id <DISPATCHER_ID> --source-account passkeygate-deployer \
+  --network testnet -- set_verification_key \
+  --alpha <96_HEX> --beta <192_HEX> --gamma <192_HEX> --delta <192_HEX> \
+  --ic "[<96_HEX>,<96_HEX>]"
+```
+
+---
+
+## 📚 Documentation
+
+| Document | Location |
+|----------|----------|
+| Product Requirements | `PRD.md` |
+| PRD Sync (May 29) | `.planning/PRD_SYNC_MAY29.md` |
+| PM Gap Analysis | `.planning/PM_GAP_ANALYSIS_MAY28.md` |
+| BLS12-381 API Reference | `refs/bls12_381_soroban_api.md` |
+| Testnet DeFi Integration | `refs/testnet_defi_integration.md` |
+| x402/MPP Research | `refs/x402_mpp_research.md` |
+| Services Config | `refs/testnet_services_config.md` |
+| SEP Compliance Matrix | `refs/sep_compliance.md` |
+| Bug Bounty Program | `security/bug_bounty_program.md` |
+| Vulnerability Triage SOP | `security/vulnerability_triage_sop.md` |
+| Sprint 4 Plan | `.planning/SPRINT_4_POLISH_AUDIT_PRODUCTION.md` |
+
+---
+
+## 🔗 Resources
+
+- **Live Frontend:** [https://frontend-mbpksm4c5-candras-projects.vercel.app](https://frontend-mbpksm4c5-candras-projects.vercel.app)
+- **Soroban Documentation:** [soroban.stellar.org](https://soroban.stellar.org)
+- **Stellar SDK Docs:** [stellar.org/developers](https://stellar.org/developers)
+- **Soroban Rust SDK:** [docs.rs/soroban-sdk](https://docs.rs/soroban-sdk)
+- **Testnet Explorer:** [stellar.expert/explorer/testnet](https://stellar.expert/explorer/testnet)
+
+---
+
+## ⚠️ Important Notes
+
+- **Testnet Only:** This project is exclusively for testnet demonstration. Network guard prevents mainnet use.
+- **Soroban SDK v26.0.0:** Protocol 26 "Yardstick" — stellar-xdr v26.0.1, soroban-env v26.1.3
+- **Zero Compiler Warnings:** All contracts compile with `cargo clippy` — zero warnings enforced
+
+---
+
+**Last Updated:** May 29, 2026  
+**Status:** ✅ All contracts deployed and E2E verified on Stellar Testnet. Frontend live on Vercel.  
+**Next:** External audit engagement (SEC-002), governance fee proposal (GOV-001), developer docs (DOC-001)

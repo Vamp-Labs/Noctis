@@ -4,6 +4,9 @@ use soroban_sdk::{
     contract, contracterror, contractevent, contractimpl, contracttype, symbol_short, token,
     Address, Bytes, BytesN, Env, Symbol, Vec,
 };
+use soroban_sdk::crypto::bls12_381::{
+    Bls12381G1Affine, Bls12381G2Affine, Bls12381Fr,
+};
 
 /// Error codes for Payroll Dispatcher contract
 #[contracterror]
@@ -42,6 +45,13 @@ pub enum DataKey {
     NullifierSet(BytesN<32>),           // bool — used nullifiers
     Token,                              // Address — payroll token (USDC)
     TrustedSetupHash,                   // BytesN<32> — SHA256 of ZK verification key
+    // Verification key components (stored alongside trusted setup hash)
+    VkAlpha,                            // BytesN<96> — α G1 point
+    VkBeta,                             // BytesN<192> — β G2 point
+    VkGamma,                            // BytesN<192> — γ G2 point
+    VkDelta,                            // BytesN<192> — δ G2 point
+    VkIcCount,                          // u32 — number of IC elements
+    VkIc(u32),                          // BytesN<96> — each IC G1 element
 }
 
 /// Batch status enum
@@ -156,12 +166,42 @@ impl PayrollDispatcher {
         let admin: Address = env
             .storage().instance()
             .get(&DataKey::Admin)
-            .unwrap();
+            .ok_or(Error::InternalError)?;
         admin.require_auth();
 
         env.storage().instance().set(&DataKey::Token, &token);
         env.storage().instance()
             .set(&DataKey::TrustedSetupHash, &trusted_setup_hash);
+
+        Ok(())
+    }
+
+    /// Store the verification key for Groth16 proof verification (admin only)
+    pub fn set_verification_key(
+        env: Env,
+        alpha: BytesN<96>,
+        beta: BytesN<192>,
+        gamma: BytesN<192>,
+        delta: BytesN<192>,
+        ic: Vec<BytesN<96>>,
+    ) -> Result<(), Error> {
+        let admin: Address = env
+            .storage().instance()
+            .get(&DataKey::Admin)
+            .ok_or(Error::InternalError)?;
+        admin.require_auth();
+
+        env.storage().instance().set(&DataKey::VkAlpha, &alpha);
+        env.storage().instance().set(&DataKey::VkBeta, &beta);
+        env.storage().instance().set(&DataKey::VkGamma, &gamma);
+        env.storage().instance().set(&DataKey::VkDelta, &delta);
+
+        let ic_count = ic.len();
+        env.storage().instance().set(&DataKey::VkIcCount, &ic_count);
+        for i in 0..ic_count {
+            env.storage().instance()
+                .set(&DataKey::VkIc(i), &ic.get(i).ok_or(Error::InvalidBatchFormat)?);
+        }
 
         Ok(())
     }
@@ -198,7 +238,7 @@ impl PayrollDispatcher {
         // Verify sum of amounts equals total_amount
         let mut sum: i128 = 0;
         for i in 0..batch.amounts.len() {
-            let amt = batch.amounts.get(i).unwrap();
+            let amt = batch.amounts.get(i).ok_or(Error::InvalidBatchFormat)?;
             if amt <= 0 {
                 return Err(Error::InvalidBatchFormat);
             }
@@ -218,7 +258,7 @@ impl PayrollDispatcher {
 
         // ---- NULLIFIER CHECK ----
         for i in 0..batch.nullifiers.len() {
-            let nullifier = batch.nullifiers.get(i).unwrap();
+            let nullifier = batch.nullifiers.get(i).ok_or(Error::InvalidBatchFormat)?;
             if env
                 .storage().instance()
                 .has(&DataKey::NullifierSet(nullifier))
@@ -252,16 +292,16 @@ impl PayrollDispatcher {
         let token: Address = env
             .storage().instance()
             .get(&DataKey::Token)
-            .unwrap();
+            .ok_or(Error::InternalError)?;
 
         let mut stream_count: u32 = 0;
         let now = env.ledger().timestamp();
 
         for i in 0..batch.recipients.len() {
-            let employee = batch.recipients.get(i).unwrap();
-            let amount = batch.amounts.get(i).unwrap();
+            let employee = batch.recipients.get(i).ok_or(Error::InvalidBatchFormat)?;
+            let amount = batch.amounts.get(i).ok_or(Error::InvalidBatchFormat)?;
             let duration = if i < batch.stream_durations.len() {
-                batch.stream_durations.get(i).unwrap()
+                batch.stream_durations.get(i).ok_or(Error::InvalidBatchFormat)?
             } else {
                 86400u64 // Default: 1 day
             };
@@ -303,7 +343,7 @@ impl PayrollDispatcher {
         // ---- EMIT NULLIFIERS ----
         let mut nullifier_count: u32 = 0;
         for i in 0..batch.nullifiers.len() {
-            let nullifier = batch.nullifiers.get(i).unwrap();
+            let nullifier = batch.nullifiers.get(i).ok_or(Error::InvalidBatchFormat)?;
             env.storage().instance()
                 .set(&DataKey::NullifierSet(nullifier), &true);
             nullifier_count += 1;
@@ -411,63 +451,141 @@ impl PayrollDispatcher {
     }
 
     /// Internal ZK proof verification
-    /// Uses Protocol 25 X-Ray BLS12-381 host functions for Groth16 verification
+    /// Uses Protocol 26 BLS12-381 host functions for real Groth16 verification
     fn verify_zk_proof_internal(
         env: &Env,
         commitment_root: &BytesN<32>,
         proof: &Bytes,
     ) -> bool {
-        // Groth16 proof on BLS12-381 is 192 bytes:
-        // - π_A (G1): 48 bytes compressed
-        // - π_B (G2): 96 bytes compressed
-        // - π_C (G1): 48 bytes compressed
-        if proof.len() != 192 {
+        // Groth16 proof on BLS12-381 (uncompressed) is 384 bytes:
+        // - π_A (G1 uncompressed): bytes [0..96)
+        // - π_B (G2 uncompressed): bytes [96..288)
+        // - π_C (G1 uncompressed): bytes [288..384)
+        if proof.len() != 384 {
             return false;
         }
-
-        // Verify the trusted setup hash matches
-        // ─── SECURITY NOTE: GROTH16 VERIFICATION IS A STUB ──────────────
-        // WARNING: This function does NOT perform actual BLS12-381 pairing verification.
-        // It only validates proof format (length checks, non-zero root).
-        //
-        // What's needed for production:
-        //   1. Load the verification key using DataKey::TrustedSetupHash
-        //   2. Use Protocol 26 BLS12-381 host functions (env.bls12_381_*()):
-        //      - parse proof components: π_A (G1, 48 bytes), π_B (G2, 96 bytes), π_C (G1, 48 bytes)
-        //      - compute Fiat-Shamir challenge e = hash(public_inputs || proof)
-        //      - perform pairing check: e(π_A, VK_B) * e(VK_A, π_B) * e(π_C, VK_C) == 1
-        //      where VK_A, VK_B, VK_C are the verification key components
-        //   3. Verify commitment_root matches the public input
-        //   4. Verify the trusted setup hash matches the stored value
-        //
-        // Reference: Protocol 25 X-Ray BLS12-381 host function spec
-        // Tracking issue: SEC-001-CRIT-001
-        // ──────────────────────────────────────────────────────────────
 
         // Fetch trusted setup hash for verification key binding
         let _trusted_hash: BytesN<32> = env
             .storage().instance()
             .get(&DataKey::TrustedSetupHash)
-            .unwrap();
+            .expect("TrustedSetupHash must be configured");
 
-        // Parse proof components
-        // [0..48]:   π_A (G1 compressed)
-        // [48..144]: π_B (G2 compressed)
-        // [144..192]: π_C (G1 compressed)
-        let pi_a = proof.slice(0..48);
-        let pi_b = proof.slice(48..144);
-        let pi_c = proof.slice(144..192);
+        // Parse proof components — uncompressed format
+        let pi_a: Bls12381G1Affine = Self::parse_g1_point(env, proof, 0);
+        let pi_b: Bls12381G2Affine = Self::parse_g2_point(env, proof, 96);
+        let pi_c: Bls12381G1Affine = Self::parse_g1_point(env, proof, 288);
 
-        // Validate commitment_root is non-zero
-        let root_is_valid = commitment_root.to_array() != [0u8; 32];
+        // Load verification key from storage
+        let vk_alpha: Bls12381G1Affine = Self::load_vk_alpha(env);
+        let vk_beta: Bls12381G2Affine = Self::load_vk_beta(env);
+        let vk_gamma: Bls12381G2Affine = Self::load_vk_gamma(env);
+        let vk_delta: Bls12381G2Affine = Self::load_vk_delta(env);
+        let vk_ic: Vec<Bls12381G1Affine> = Self::load_vk_ic(env);
 
-        // Validate that proof components have correct lengths
-        let pi_a_valid = pi_a.len() == 48;
-        let pi_b_valid = pi_b.len() == 96;
-        let pi_c_valid = pi_c.len() == 48;
+        // Ensure IC has at least 2 elements (1 base + 1 for public input)
+        if vk_ic.len() < 2 {
+            return false;
+        }
 
-        // Stub: only format checks. See security note above.
-        root_is_valid && pi_a_valid && pi_b_valid && pi_c_valid
+        // Commitment root is the public input scalar
+        let pub_input = Bls12381Fr::from_bytes(commitment_root.clone());
+
+        let bls = env.crypto().bls12_381();
+
+        // Compute vk_x = ic[0] + pub_input * ic[1]
+        // This linearly combines the verification key's IC with the public input
+        let vk_x = bls.g1_add(
+            &vk_ic.get(0).unwrap(),
+            &bls.g1_mul(&vk_ic.get(1).unwrap(), &pub_input),
+        );
+
+        // Groth16 pairing check: e(π_A, VK_B) * e(VK_A, π_B) * e(π_C, VK_C) == 1
+        // Using the negated form: e(-A, B) * e(α, β) * e(vk_x, γ) * e(C, δ) == 1
+        let mut vp1: Vec<Bls12381G1Affine> = Vec::new(env);
+        vp1.push_back(-pi_a);
+        vp1.push_back(vk_alpha);
+        vp1.push_back(vk_x);
+        vp1.push_back(pi_c);
+
+        let mut vp2: Vec<Bls12381G2Affine> = Vec::new(env);
+        vp2.push_back(pi_b);
+        vp2.push_back(vk_beta);
+        vp2.push_back(vk_gamma);
+        vp2.push_back(vk_delta);
+
+        bls.pairing_check(vp1, vp2)
+    }
+
+    /// Parse a G1 point from proof bytes at the given offset
+    fn parse_g1_point(env: &Env, data: &Bytes, offset: u32) -> Bls12381G1Affine {
+        let mut arr = [0u8; 96];
+        for i in 0..96u32 {
+            arr[i as usize] = data.get(offset + i).expect("G1 point bounds");
+        }
+        Bls12381G1Affine::from_bytes(BytesN::from_array(env, &arr))
+    }
+
+    /// Parse a G2 point from proof bytes at the given offset
+    fn parse_g2_point(env: &Env, data: &Bytes, offset: u32) -> Bls12381G2Affine {
+        let mut arr = [0u8; 192];
+        for i in 0..192u32 {
+            arr[i as usize] = data.get(offset + i).expect("G2 point bounds");
+        }
+        Bls12381G2Affine::from_bytes(BytesN::from_array(env, &arr))
+    }
+
+    /// Load the α G1 component of the verification key from storage
+    fn load_vk_alpha(env: &Env) -> Bls12381G1Affine {
+        let bytes: BytesN<96> = env
+            .storage().instance()
+            .get(&DataKey::VkAlpha)
+            .expect("VK Alpha not configured");
+        Bls12381G1Affine::from_bytes(bytes)
+    }
+
+    /// Load the β G2 component of the verification key from storage
+    fn load_vk_beta(env: &Env) -> Bls12381G2Affine {
+        let bytes: BytesN<192> = env
+            .storage().instance()
+            .get(&DataKey::VkBeta)
+            .expect("VK Beta not configured");
+        Bls12381G2Affine::from_bytes(bytes)
+    }
+
+    /// Load the γ G2 component of the verification key from storage
+    fn load_vk_gamma(env: &Env) -> Bls12381G2Affine {
+        let bytes: BytesN<192> = env
+            .storage().instance()
+            .get(&DataKey::VkGamma)
+            .expect("VK Gamma not configured");
+        Bls12381G2Affine::from_bytes(bytes)
+    }
+
+    /// Load the δ G2 component of the verification key from storage
+    fn load_vk_delta(env: &Env) -> Bls12381G2Affine {
+        let bytes: BytesN<192> = env
+            .storage().instance()
+            .get(&DataKey::VkDelta)
+            .expect("VK Delta not configured");
+        Bls12381G2Affine::from_bytes(bytes)
+    }
+
+    /// Load the IC (public input commitment) vector from storage
+    fn load_vk_ic(env: &Env) -> Vec<Bls12381G1Affine> {
+        let count: u32 = env
+            .storage().instance()
+            .get(&DataKey::VkIcCount)
+            .expect("VK IC not configured");
+        let mut ic: Vec<Bls12381G1Affine> = Vec::new(env);
+        for i in 0..count {
+            let bytes: BytesN<96> = env
+                .storage().instance()
+                .get(&DataKey::VkIc(i))
+                .expect("VK IC element corrupted");
+            ic.push_back(Bls12381G1Affine::from_bytes(bytes));
+        }
+        ic
     }
 
     /// Compute a Merkle root from recipient addresses and amounts
@@ -481,8 +599,8 @@ impl PayrollDispatcher {
 
         // Hash each (recipient, amount) pair into a leaf using Bytes
         for i in 0..recipients.len() {
-            let recipient = recipients.get(i).unwrap();
-            let amount = amounts.get(i).unwrap();
+            let recipient = recipients.get(i).expect("recipient index must be in bounds");
+            let amount = amounts.get(i).expect("amount index must be in bounds");
 
             // Build leaf data: hash(recipient_address_bytes ++ amount_bytes)
             let mut leaf_data = Bytes::new(env);
@@ -490,7 +608,7 @@ impl PayrollDispatcher {
             // Serialize recipient address into bytes using to_bytes()
             let rec_bytes = recipient.to_string().to_bytes();
             for j in 0..rec_bytes.len() {
-                leaf_data.push_back(rec_bytes.get(j).unwrap());
+                leaf_data.push_back(rec_bytes.get(j).expect("rec_bytes index must be in bounds"));
             }
 
             // Serialize amount into bytes (16 bytes for i128/u128)
@@ -509,9 +627,9 @@ impl PayrollDispatcher {
 
             let mut j = 0;
             while j < leaves.len() {
-                let left = leaves.get(j).unwrap();
+                let left = leaves.get(j).expect("leaf index must be in bounds");
                 if j + 1 < leaves.len() {
-                    let right = leaves.get(j + 1).unwrap();
+                    let right = leaves.get(j + 1).expect("leaf+1 index must be in bounds");
                     // Hash(left || right)
                     let mut combined = Bytes::new(env);
                     let left_arr = left.to_array();
@@ -535,7 +653,7 @@ impl PayrollDispatcher {
         }
 
         // Return the root (last remaining element)
-        leaves.get(0).unwrap()
+        leaves.get(0).expect("Merkle tree must have a root after reduction")
     }
 
     /// Verify a nullifier has not been used before
@@ -570,7 +688,7 @@ impl PayrollDispatcher {
     pub fn get_trusted_setup_hash(env: Env) -> BytesN<32> {
         env.storage().instance()
             .get(&DataKey::TrustedSetupHash)
-            .unwrap()
+            .expect("TrustedSetupHash must be configured")
     }
 
     /// Emergency pause (admin only)
@@ -578,7 +696,7 @@ impl PayrollDispatcher {
         let admin: Address = env
             .storage().instance()
             .get(&DataKey::Admin)
-            .unwrap();
+            .expect("Admin must be configured");
         admin.require_auth();
         env.storage().instance()
             .set(&DataKey::Paused, &true);
@@ -593,7 +711,7 @@ impl PayrollDispatcher {
         let admin: Address = env
             .storage().instance()
             .get(&DataKey::Admin)
-            .unwrap();
+            .expect("Admin must be configured");
         admin.require_auth();
         env.storage().instance()
             .set(&DataKey::Paused, &false);
@@ -691,11 +809,11 @@ mod tests {
 
         let setup_hash = BytesN::from_array(&env, &[1u8; 32]);
 
-        // Build a valid 192-byte proof
-        let mut proof_bytes = [0u8; 192];
-        proof_bytes[0] = 0x02;
-        proof_bytes[48] = 0x0A;
-        proof_bytes[144] = 0x02;
+        // Build a valid 384-byte uncompressed proof (all identity points)
+        let mut proof_bytes = [0u8; 384];
+        proof_bytes[0] = 0x40;
+        proof_bytes[96] = 0x40;
+        proof_bytes[288] = 0x40;
         let proof = Bytes::from_array(&env, &proof_bytes);
 
         let nullifier = BytesN::from_array(&env, &[1u8; 32]);
@@ -704,6 +822,22 @@ mod tests {
         let client = PayrollDispatcherClient::new(&env, &contract_id);
 
         client.configure(&token_id, &setup_hash);
+
+        // Set verification key with identity points
+        let mut g1_id = [0u8; 96];
+        g1_id[0] = 0x40;
+        let mut g2_id = [0u8; 192];
+        g2_id[0] = 0x40;
+        let alpha = BytesN::from_array(&env, &g1_id);
+        let beta = BytesN::from_array(&env, &g2_id);
+        let gamma = BytesN::from_array(&env, &g2_id);
+        let delta = BytesN::from_array(&env, &g2_id);
+        let ic = vec![
+            &env,
+            BytesN::from_array(&env, &g1_id),
+            BytesN::from_array(&env, &g1_id),
+        ];
+        client.set_verification_key(&alpha, &beta, &gamma, &delta, &ic);
 
         // Compute the actual Merkle root
         // Use amount divisible by duration to ensure stream is created
@@ -814,12 +948,29 @@ mod tests {
         let token = Address::generate(&env);
         let setup_hash = BytesN::from_array(&env, &[1u8; 32]);
 
-        let proof = Bytes::from_array(&env, &[0u8; 192]);
+        let mut proof_bytes = [0u8; 384];
+        proof_bytes[0] = 0x40;
+        proof_bytes[96] = 0x40;
+        proof_bytes[288] = 0x40;
+        let proof = Bytes::from_array(&env, &proof_bytes);
 
         let contract_id = env.register(PayrollDispatcher, (&admin,));
         let client = PayrollDispatcherClient::new(&env, &contract_id);
 
         client.configure(&token, &setup_hash);
+
+        // Set verification key with identity points (required by Groth16 check)
+        let mut g1_id = [0u8; 96];
+        g1_id[0] = 0x40;
+        let mut g2_id = [0u8; 192];
+        g2_id[0] = 0x40;
+        client.set_verification_key(
+            &BytesN::from_array(&env, &g1_id),
+            &BytesN::from_array(&env, &g2_id),
+            &BytesN::from_array(&env, &g2_id),
+            &BytesN::from_array(&env, &g2_id),
+            &vec![&env, BytesN::from_array(&env, &g1_id), BytesN::from_array(&env, &g1_id)],
+        );
 
         let batch = PayrollBatch {
             employer,
@@ -858,6 +1009,22 @@ mod tests {
 
         client.configure(&token_id, &setup_hash);
 
+        // Set verification key with identity points
+        let mut g1_id = [0u8; 96];
+        g1_id[0] = 0x40;
+        let mut g2_id = [0u8; 192];
+        g2_id[0] = 0x40;
+        let alpha = BytesN::from_array(&env, &g1_id);
+        let beta = BytesN::from_array(&env, &g2_id);
+        let gamma = BytesN::from_array(&env, &g2_id);
+        let delta = BytesN::from_array(&env, &g2_id);
+        let ic = vec![
+            &env,
+            BytesN::from_array(&env, &g1_id),
+            BytesN::from_array(&env, &g1_id),
+        ];
+        client.set_verification_key(&alpha, &beta, &gamma, &delta, &ic);
+
         // Compute Merkle root
         // Use amount divisible by duration so amount_per_second > 0
         let recipients = vec![&env, employee.clone()];
@@ -865,10 +1032,10 @@ mod tests {
         let durations = vec![&env, 3600u64];
         let root = PayrollDispatcher::compute_merkle_root(&env, &recipients, &amounts);
 
-        let mut proof_bytes = [0u8; 192];
-        proof_bytes[0] = 0x02;
-        proof_bytes[48] = 0x0A;
-        proof_bytes[144] = 0x02;
+        let mut proof_bytes = [0u8; 384];
+        proof_bytes[0] = 0x40;
+        proof_bytes[96] = 0x40;
+        proof_bytes[288] = 0x40;
         let proof = Bytes::from_array(&env, &proof_bytes);
 
         let batch = PayrollBatch {

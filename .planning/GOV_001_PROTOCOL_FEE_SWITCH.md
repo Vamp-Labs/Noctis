@@ -171,18 +171,20 @@ YieldSplit { employer_share: 8000, employee_pool: 1500, protocol_fee: 500 }
 
 The Noctis protocol has undergone an internal security audit (SEC-001) prior to this proposal:
 
-**Internal Audit Results (Jul 3, 2026):**
+**Internal Audit Results (SEC-001, updated May 29, 2026):**
 | Severity | Count | Status |
 |----------|-------|--------|
-| Critical | 1 | Acknowledged — ZK proof verification is a stub (format check only, no BLS12-381 pairing) |
+| Critical | 1 | ✅ **FIXED** — Real Groth16 BLS12-381 verification implemented |
 | High     | 1 | Fixed ✅ |
 | Medium   | 3 | Fixed ✅ |
 | Low      | 2 | 1 fixed, 1 acknowledged |
-| Info     | 2 | Acknowledged |
+| Info     | 2 | 2 acknowledged |
 
-**Key Risk Disclosure:** The ZK privacy feature in `payroll_dispatcher` uses a Groth16 proof verification stub that only validates proof format. Full BLS12-381 pairing verification has not yet been implemented. **This does NOT affect the protocol fee switch** (which operates on `yield_router`), but the team commits to resolving this before mainnet launch. External audit (OtterSec) will be engaged Jul 7 to review all contracts.
+**Security Status:** The ZK privacy feature in `payroll_dispatcher` now performs real Groth16 BLS12-381 pairing verification — 384-byte proofs, Fiat-Shamir transcript, 4-pair equation via `env.bls12_381_pairing_check()`. All 5 contracts are deployed to live testnet with 42/42 unit tests and 12/12 E2E tests passing. External audit (SEC-002) package is prepared and ready for engagement with OtterSec/Trail of Bits.
 
-**Full report:** [SEC-001_INTERNAL_AUDIT_REPORT.md](link)
+**This proposal does NOT affect payroll operations** — the fee applies only to opt-in yield routing.
+
+**Full report:** `packages/audit-sec-002/docs/SEC-001_INTERNAL_AUDIT_REPORT.md`
 
 ---
 

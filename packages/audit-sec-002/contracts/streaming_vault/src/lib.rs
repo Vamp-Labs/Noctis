@@ -481,7 +481,7 @@ impl StreamingVault {
 
     /// Emergency pause (admin only)
     pub fn pause(env: Env) {
-        let admin: Address = env.storage().instance().get(&DataKey::Admin).unwrap();
+        let admin: Address = env.storage().instance().get(&DataKey::Admin).expect("Admin must be configured");
         admin.require_auth();
         env.storage().instance().set(&DataKey::Paused, &true);
         AllPausedEvent {
@@ -492,7 +492,7 @@ impl StreamingVault {
 
     /// Emergency unpause (admin only)
     pub fn unpause(env: Env) {
-        let admin: Address = env.storage().instance().get(&DataKey::Admin).unwrap();
+        let admin: Address = env.storage().instance().get(&DataKey::Admin).expect("Admin must be configured");
         admin.require_auth();
         env.storage().instance().set(&DataKey::Paused, &false);
         AllUnpausedEvent {

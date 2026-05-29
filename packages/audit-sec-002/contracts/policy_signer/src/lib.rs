@@ -202,7 +202,7 @@ impl PolicySigner {
 
         // Iterate through all policies; a transaction must pass ALL active policies
         for i in 0..employer_policies.len() {
-            let policy_id = employer_policies.get(i).unwrap();
+            let policy_id = employer_policies.get(i).ok_or(Error::PolicyNotFound)?;
             let active = env
                 .storage().instance()
                 .get::<_, bool>(&DataKey::ActivePolicy(policy_id))
@@ -244,7 +244,7 @@ impl PolicySigner {
                 if !policy.allowed_tokens.is_empty() {
                     let mut token_allowed = false;
                     for j in 0..policy.allowed_tokens.len() {
-                        if policy.allowed_tokens.get(j).unwrap() == token_addr {
+                        if policy.allowed_tokens.get(j).ok_or(Error::InternalError)? == token_addr {
                             token_allowed = true;
                             break;
                         }
@@ -263,10 +263,10 @@ impl PolicySigner {
 
                 // Verify each signer is authorized
                 for k in 0..signers.len() {
-                    let signer = signers.get(k).unwrap();
+                    let signer = signers.get(k).ok_or(Error::InternalError)?;
                     let mut authorized = false;
                     for m in 0..policy.authorized_signers.len() {
-                        if policy.authorized_signers.get(m).unwrap() == signer {
+                        if policy.authorized_signers.get(m).ok_or(Error::InternalError)? == signer {
                             authorized = true;
                             break;
                         }
@@ -279,7 +279,7 @@ impl PolicySigner {
         }
 
         // Return the first active policy ID (caller uses this for reference)
-        let first_policy_id = employer_policies.get(0).unwrap();
+        let first_policy_id = employer_policies.get(0).ok_or(Error::PolicyNotFound)?;
         Ok(first_policy_id)
     }
 
@@ -327,7 +327,7 @@ impl PolicySigner {
 
         let mut policies: Vec<PolicyData> = Vec::new(&env);
         for i in 0..policy_ids.len() {
-            let pid = policy_ids.get(i).unwrap();
+            let pid = policy_ids.get(i).expect("policy_ids index must be in bounds");
             if let Some(policy) = env.storage().instance().get(&DataKey::Policy(pid)) {
                 policies.push_back(policy);
             }

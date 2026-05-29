@@ -626,11 +626,11 @@ Indexer:
 
 | Contract | Testnet Address | Mainnet Address |
 |----------|----------------|-----------------|
-| `policy_signer` | _______________ | _______________ |
-| `streaming_vault` | _______________ | _______________ |
-| `wallet_factory` | _______________ | _______________ |
-| `yield_router` | _______________ | _______________ |
-| `payroll_dispatcher` | _______________ | _______________ |
+| `policy_signer` | `CCQTEQOHLRV4IR5HZ6WXRFSPC2KUUWC3YJOFPABUBN5PY5NZ5HEGM5RI` | TBD |
+| `streaming_vault` | `CCR6YESUPNGSTDU2JNP5AG5HJ6PZLHC6RUVRHRBK44PDAZO5EUQLE3E3` | TBD |
+| `wallet_factory` | `CA5KLXL6T2PLD4OVEVVG3QS5B7NQ3S7BGATNNCKD2R6TK2Y724K434SQ` | TBD |
+| `yield_router` | `CBFWLCN5XTFZHCJGWNIBSMMB3M5SMFAYHTCOGHWBY2SSXSK5XEE5Q7KB` | TBD |
+| `payroll_dispatcher` | `CDP36DTJD22K3MHBPS7YF724S4H4ZB6OAX3W4UYXFQ35AE62S4EHR4LF` | TBD |
 
 ## APPENDIX C: ROLLING CHECKLIST (PHYSICAL COPY)
 
@@ -664,6 +664,6 @@ Print this checklist and put it on the war room wall during launch:
 ---
 
 *End of Production Deployment Checklist*  
-*Date: June 26, 2026*  
+*Date: May 29, 2026*  
 *Phase: Sprint 3 — Production Readiness*  
 *Status: ✅ COMPLETE — Ready for DevOps + Backend Engineer*

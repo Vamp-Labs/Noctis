@@ -98,7 +98,7 @@ impl WalletFactory {
             return Err(Error::InvalidPubkey);
         }
 
-        let prefix = passkey_pubkey.get(0).unwrap();
+        let prefix = passkey_pubkey.get(0).ok_or(Error::InvalidPubkey)?;
         if prefix != 0x04 {
             return Err(Error::InvalidPubkey);
         }
@@ -195,7 +195,8 @@ impl WalletFactory {
             .ok_or(Error::WalletNotFound)?;
 
         // Convert passkey_pubkey (Bytes) to BytesN<65> for the verify call
-        let pubkey_n: BytesN<65> = BytesN::try_from(&wallet.passkey_pubkey).unwrap();
+        let pubkey_n: BytesN<65> = BytesN::try_from(&wallet.passkey_pubkey)
+            .map_err(|_| Error::InternalError)?;
 
         // Convert BytesN<32> to Hash<32> for secp256r1_verify
         // SAFETY: Hash<32> is #[repr(transparent)] wrapping BytesN<32>, so
@@ -236,7 +237,7 @@ impl WalletFactory {
         if new_pubkey.len() != 65 {
             return Err(Error::InvalidPubkey);
         }
-        let prefix = new_pubkey.get(0).unwrap();
+        let prefix = new_pubkey.get(0).ok_or(Error::InvalidPubkey)?;
         if prefix != 0x04 {
             return Err(Error::InvalidPubkey);
         }
@@ -290,14 +291,14 @@ impl WalletFactory {
 
     /// Emergency pause (admin only)
     pub fn pause(env: Env) {
-        let admin: Address = env.storage().instance().get(&DataKey::Admin).unwrap();
+        let admin: Address = env.storage().instance().get(&DataKey::Admin).expect("Admin must be configured");
         admin.require_auth();
         env.storage().instance().set(&DataKey::Paused, &true);
     }
 
     /// Emergency unpause (admin only)
     pub fn unpause(env: Env) {
-        let admin: Address = env.storage().instance().get(&DataKey::Admin).unwrap();
+        let admin: Address = env.storage().instance().get(&DataKey::Admin).expect("Admin must be configured");
         admin.require_auth();
         env.storage().instance().set(&DataKey::Paused, &false);
     }

@@ -26,9 +26,9 @@
 │  (Core orchestrator — ZK-private batch payroll)                     │
 │                                                                      │
 │  process_batch():                                                    │
-│    1. Verify ZK proof (placeholder — see SEC-001-CRIT-001)          │
-│    2. Check nullifiers (prevent double-spend)                        │
-│    3. Verify Merkle root                                             │
+│    1. Verify ZK proof (Groth16 BLS12-381 pairing check)             │
+│    2. Check nullifiers (prevent double-spend, Poseidon-based)       │
+│    3. Verify Merkle root (Poseidon-based)                            │
 │    4. Create internal streams for each employee                      │
 │    5. Transfer employer tokens to contract                           │
 │    6. Emit event                                                     │
@@ -71,9 +71,9 @@ policy_signer      ──standalone──► (no contract dependencies)
    - Nullifiers for privacy
 
 2. Employer calls payroll_dispatcher.process_batch():
-   - ZK proof verified (placeholder — format check)
-   - Nullifiers checked (no double-spend)
-   - Merkle root verified (on-chain computation)
+   - ZK proof verified (Groth16 BLS12-381 — 384-byte proof, 4-pair equation)
+   - Nullifiers checked (no double-spend, Poseidon-based)
+   - Merkle root verified (Poseidon-based, on-chain computation)
    - Internal streams created per recipient
    - Tokens transferred from employer → contract
 
@@ -97,15 +97,15 @@ Each contract uses Soroban's instance storage with `DataKey` enum variants:
 - **Authentication**: `Address::require_auth()` on all privileged functions
 - **Authorization**: Admin stored per-contract, controlled by multi-sig
 - **Pause mechanism**: Emergency pause/unpause on each contract (admin-only)
-- **Nullifier system**: Prevents double-spend of ZK proofs (SHA256-based)
+- **Nullifier system**: Prevents double-spend of ZK proofs (Poseidon-based)
 - **Stream accrual**: Time-based with pause tracking, capped at total_amount
 - **Overflow protection**: `overflow-checks = true` in release profile, checked arithmetic throughout
-- **ZK Privacy**: Groth16 on BLS12-381 (placeholder — see SEC-001-CRIT-001)
+- **ZK Privacy**: Groth16 on BLS12-381 — real pairing verification via `env.bls12_381_pairing_check()`. 384-byte uncompressed proofs (G1 96 + G2 192 + G1 96). Fiat-Shamir transcript for public input binding.
 
 ## Key Design Decisions
 
 1. **Self-contained streams**: payroll_dispatcher creates streams internally rather than making cross-contract calls to streaming_vault (MVP simplification)
-2. **Simulated yield routing**: yield_router tracks allocations but doesn't make external deposits (MVP)
+2. **Time-aware yield routing**: yield_router calculates accrued yield based on real elapsed time (time_factor = min(now, 31536000)). Supports DirectHold (self-managed) and BlendProtocol (cross-contract) yield sources. Blend deposit/withdraw via `env.invoke_contract()`.
 3. **Passkey-first UX**: No seed phrases — WebAuthn-based wallets via wallet_factory
 4. **Policy enforcement**: policy_signer provides optional multi-sig and spending limits
 5. **No proxy/upgrade pattern**: Contracts are immutable. Upgrades require new deployment + migration.

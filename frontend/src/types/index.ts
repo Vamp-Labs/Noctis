@@ -13,7 +13,16 @@ export const CONTRACT_ADDRESSES = {
   wallet_factory: "CA5KLXL6T2PLD4OVEVVG3QS5B7NQ3S7BGATNNCKD2R6TK2Y724K434SQ",
   yield_router: "CBFWLCN5XTFZHCJGWNIBSMMB3M5SMFAYHTCOGHWBY2SSXSK5XEE5Q7KB",
   policy_signer: "CCQTEQOHLRV4IR5HZ6WXRFSPC2KUUWC3YJOFPABUBN5PY5NZ5HEGM5RI",
+  // NOCTIS test token (SAC — Stellar Asset Contract)
+  noctis_token: "CDMM3QPRZKQDOXSG3BJMXLBXVYAVAN5NGUJOVVXDEGB4YHNU44V54OYI",
 };
+
+// ─── Faucet Config ────────────────────────────────────────────────
+export const FAUCET_CONFIG = {
+  claimAmount: "100000",          // 100,000 NOCTIS per claim
+  friendbotUrl: STELLAR_NETWORK.friendbot,
+  apiUrl: "/api/faucet/claim",
+} as const;
 
 // ─── User Types ──────────────────────────────────────────────────
 export type UserRole = "employer" | "employee";

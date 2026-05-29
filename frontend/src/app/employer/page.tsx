@@ -7,6 +7,7 @@ import { PayrollDispatcherClient } from "@/lib/contracts/payrollDispatcher";
 import { YieldRouterClient } from "@/lib/contracts/yieldRouter";
 import { PolicySignerClient } from "@/lib/contracts/policySigner";
 import { processPayrollBatch, hexToBytes } from "@/lib/zk";
+import { claimFaucet, hasClaimedInSession, markClaimedInSession } from "@/lib/faucet";
 import type { StreamData, PayrollRecipient, PolicyConfig, YieldSplit, EmployerAllocation } from "@/types";
 import Papa from "papaparse";
 
@@ -79,6 +80,10 @@ export default function EmployerDashboard() {
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
 
+  // Faucet state
+  const [showFaucetBanner, setShowFaucetBanner] = useState(false);
+  const [isClaimingFaucet, setIsClaimingFaucet] = useState(false);
+
   // Policy creation form state
   const [showPolicyForm, setShowPolicyForm] = useState(false);
   const [policyName, setPolicyName] = useState("");
@@ -134,6 +139,12 @@ export default function EmployerDashboard() {
           setTotalDeposited(deposited);
           setBatchCount(batches);
           setStreamCount(streams);
+
+          // Show faucet banner if balance is 0 and not already claimed this session
+          const addr = sessionStorage.getItem("noctis_wallet_address");
+          if (addr && deposited === "0" && !hasClaimedInSession(addr)) {
+            setShowFaucetBanner(true);
+          }
         }
 
         // Load yield data
@@ -351,6 +362,28 @@ export default function EmployerDashboard() {
     }
   }, []);
 
+  // ─── Faucet Claim ───────────────────────────────────────────────
+  const handleClaimFaucet = useCallback(async () => {
+    setIsClaimingFaucet(true);
+    setError(null);
+    setSuccess(null);
+    try {
+      const address = sessionStorage.getItem("noctis_wallet_address");
+      if (!address) throw new Error("Wallet not connected");
+
+      const result = await claimFaucet(address);
+      markClaimedInSession(address);
+      setShowFaucetBanner(false);
+      setSuccess(result.message || `Claimed ${result.amount} NOCTIS tokens!`);
+      // Reload balance
+      setTotalDeposited(result.amount || "100000");
+    } catch (err: any) {
+      setError(err.message || "Faucet claim failed");
+    } finally {
+      setIsClaimingFaucet(false);
+    }
+  }, []);
+
   // ─── Submit Payroll ───────────────────────────────────────────
   const handleSubmitPayroll = useCallback(async () => {
     if (csvData.length === 0) {
@@ -565,6 +598,42 @@ export default function EmployerDashboard() {
         {activeTab === "overview" && (
           <div>
             <h2 className="text-lg font-bold mb-4">Dashboard Overview</h2>
+
+            {/* Faucet banner — shown when balance is 0 */}
+            {showFaucetBanner && (
+              <div className="mb-6 p-5 rounded-xl bg-gradient-to-r from-primary/20 to-secondary/20 border border-primary/30">
+                <div className="flex items-start gap-4">
+                  <div className="shrink-0 w-10 h-10 rounded-full bg-primary/30 flex items-center justify-center text-lg">
+                    🪙
+                  </div>
+                  <div className="flex-1">
+                    <h3 className="font-semibold text-sm mb-1">Welcome! Get Test Tokens</h3>
+                    <p className="text-xs text-text-muted mb-3">
+                      Your wallet has no NOCTIS tokens yet. Claim 100,000 free test tokens
+                      to try out payroll streaming on Stellar testnet.
+                    </p>
+                    <button
+                      onClick={handleClaimFaucet}
+                      disabled={isClaimingFaucet}
+                      className={`px-5 py-2 rounded-lg text-sm font-semibold transition-colors ${
+                        isClaimingFaucet
+                          ? "bg-surface-lighter text-text-muted cursor-not-allowed"
+                          : "bg-primary hover:bg-primary-dark text-white"
+                      }`}
+                    >
+                      {isClaimingFaucet ? (
+                        <span className="flex items-center gap-2">
+                          <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white" />
+                          Claiming...
+                        </span>
+                      ) : (
+                        "🪙 Get 100,000 NOCTIS"
+                      )}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
 
             {isLoading ? (
               <div className="flex items-center justify-center py-16">

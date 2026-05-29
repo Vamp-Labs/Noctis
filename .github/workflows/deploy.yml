@@ -70,7 +70,14 @@ jobs:
           path: .env.testnet
           retention-days: 90
 
-      # ── Step 5: Commit updated .env.testnet back to repo ─────────────────
+      # ── Step 5: Frontend env vars ─────────────────────────────────────────
+      # After contract deploy, the faucet needs FAUCET_ADMIN_SECRET set.
+      # The frontend is auto-deployed by Vercel on push to main.
+      # Go to Vercel Dashboard → Settings → Environment Variables → add:
+      #   FAUCET_ADMIN_SECRET = (same as LOCAL_DEPLOYER_SECRET)
+      # This is the admin key for the NOCTIS SAC token contract (local-deployer identity).
+      #
+      # ── Step 6: Commit updated .env.testnet back to repo ──────────────────
       - name: Commit updated .env.testnet
         run: |
           git config user.name "noctis-bot"

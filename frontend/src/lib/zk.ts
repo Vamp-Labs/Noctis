@@ -5,10 +5,16 @@
 //   1. Employer uploads CSV → builds Merkle tree
 //   2. Computes witness input from payroll batch
 //   3. Generates Groth16 proof via snarkjs WASM
-//   4. Proof (192 bytes) + public signals sent to dispatcher contract
+//   4. Proof (384 bytes) + public signals sent to dispatcher contract
 //
-// Note: This uses snarkjs in the browser. For production, consider
-// Web Worker to avoid blocking the UI thread.
+// CRASH PREVENTION (May 29 fix):
+//   - treeDepth is NOW DYNAMIC (based on recipient count), NOT fixed 2^20
+//   - Heavy snarkjs WASM work is deferred via requestIdleCallback so the UI
+//     thread can paint loading spinners before freezing
+//   - processPayrollBatch() accepts an onProgress callback for stage-by-stage
+//     progress feedback in the UI
+//
+// For production: move snarkjs to a Web Worker to fully eliminate main-thread blocking.
 
 import type { PayrollRecipient } from "@/types";
 
@@ -113,11 +119,17 @@ function serializeG2(
 /**
  * Build a Merkle tree from payment list and generate proofs.
  * Uses Poseidon hash to match the Circom circuit.
+ *
+ * CRASH FIX: treeDepth is now dynamic. Instead of always padding to 2^20
+ * (1,048,576 leaves), we pad to the next power of 2 of the recipient count.
+ * For 10 recipients → depth 4 (16 leaves). For 100 → depth 7 (128 leaves).
+ * For 1000 → depth 10 (1024 leaves). This keeps computation proportional
+ * to data size instead of always doing 1M+ Poseidon hashes.
  */
 export async function buildMerkleTree(
   recipients: PayrollRecipient[],
   employerAddress: string,
-  treeDepth: number = 20
+  treeDepth?: number
 ): Promise<MerkleTreeResult> {
   const poseidon = await getPoseidon();
   const encoder = new TextEncoder();
@@ -139,7 +151,11 @@ export async function buildMerkleTree(
   }
 
   // ─── Step 2: Pad to power of 2 ─────────────────────
-  const targetSize = Math.pow(2, treeDepth);
+  // CRASH FIX: Dynamic depth based on recipient count, NOT fixed 2^20.
+  // For N recipients, depth = ceil(log2(N)), so a 2-employee payroll uses
+  // depth 1 (2 leaves) instead of depth 20 (1,048,576 leaves).
+  const actualDepth = (treeDepth ?? Math.ceil(Math.log2(recipients.length))) || 1;
+  const targetSize = Math.pow(2, actualDepth);
   while (leaves.length < targetSize) {
     // Zero-pad remaining leaves
     leaves.push(new Uint8Array(32));
@@ -148,7 +164,7 @@ export async function buildMerkleTree(
   // ─── Step 3: Build tree bottom-up ──────────────────
   const tree: Uint8Array[][] = [leaves];
 
-  for (let level = 0; level < treeDepth; level++) {
+  for (let level = 0; level < actualDepth; level++) {
     const currentLevel = tree[level];
     const nextLevel: Uint8Array[] = [];
 
@@ -166,7 +182,7 @@ export async function buildMerkleTree(
   }
 
   // Root is the only element at the top
-  const root = tree[treeDepth][0];
+  const root = tree[actualDepth][0];
 
   // ─── Step 4: Generate Merkle proofs ────────────────
   const proofs: string[][] = [];
@@ -177,7 +193,7 @@ export async function buildMerkleTree(
     const indices: number[] = [];
     let index = i;
 
-    for (let level = 0; level < treeDepth; level++) {
+    for (let level = 0; level < actualDepth; level++) {
       const siblingIndex = index % 2 === 0 ? index + 1 : index - 1;
       const sibling = tree[level][siblingIndex];
 
@@ -276,12 +292,14 @@ export async function buildWitnessInput(
  * @param zkeyUrl - URL to the proving key file (payroll_circuit.zkey)
  * @param wasmUrl - URL to the witness WASM (payroll_circuit.wasm)
  * @param witnessInput - The witness input JSON
+ * @param onProgress - Optional callback for stage updates
  * @returns Proof result with serialized bytes
  */
 export async function generateProof(
   zkeyUrl: string,
   wasmUrl: string,
-  witnessInput: WitnessInput
+  witnessInput: WitnessInput,
+  onProgress?: (stage: PayrollProgress) => void,
 ): Promise<ProofResult> {
   // Dynamic import of snarkjs (lazy loaded for code splitting)
   let snarkjs: any;
@@ -296,13 +314,19 @@ export async function generateProof(
     return getMockProof(witnessInput);
   }
 
-  // Generate witness
+  onProgress?.(PAYROLL_STAGES.GENERATING_WITNESS);
+  await yieldToEventLoop();
+
+  // Generate witness (WASM — blocks the main thread for 1-5s)
   const { witness, wtnsBytes } = await snarkjs.wtns.calculate(
     witnessInput,
     wasmUrl
   );
 
-  // Generate proof
+  onProgress?.(PAYROLL_STAGES.PROVING);
+  await yieldToEventLoop();
+
+  // Generate proof (WASM — blocks the main thread for 5-30s depending on circuit)
   const { proof, publicSignals } = await snarkjs.groth16.prove(
     zkeyUrl,
     witness
@@ -364,7 +388,40 @@ function getMockProof(witnessInput: WitnessInput): ProofResult {
   };
 }
 
+// ─── Non-blocking helpers ───────────────────────────────────────
+
+/**
+ * Yield to the browser event loop so it can paint UI updates (spinners,
+ * progress text) before the next heavy synchronous chunk.
+ *
+ * Returns a promise that resolves on the next macrotask. Use this before
+ * any computation that blocks the main thread for >50ms.
+ */
+function yieldToEventLoop(): Promise<void> {
+  return new Promise((resolve) => {
+    if (typeof requestIdleCallback === "function") {
+      requestIdleCallback(() => resolve(), { timeout: 50 });
+    } else {
+      setTimeout(resolve, 0);
+    }
+  });
+}
+
 // ─── Payroll Batch Processor ─────────────────────────────────────
+
+/**
+ * Progress stage labels passed to the onProgress callback.
+ */
+export const PAYROLL_STAGES = {
+  MERKLE_TREE: "Building Merkle tree…",
+  WITNESS_INPUT: "Preparing witness data…",
+  LOADING_SNARKJS: "Loading ZK prover (snarkjs)…",
+  GENERATING_WITNESS: "Generating witness (WASM)…",
+  PROVING: "Generating Groth16 proof…",
+  DONE: "Proof generated — submitting to chain…",
+} as const;
+
+export type PayrollProgress = (typeof PAYROLL_STAGES)[keyof typeof PAYROLL_STAGES];
 
 /**
  * Process a payroll batch end-to-end:
@@ -372,21 +429,33 @@ function getMockProof(witnessInput: WitnessInput): ProofResult {
  * 2. Generate witness input
  * 3. Generate Groth16 proof
  * 4. Return serialized proof + public signals
+ *
+ * @param onProgress - Optional callback fired before each stage so the UI
+ *   can show the current step. Use requestIdleCallback-based yielding
+ *   between stages so the browser can paint the UI update.
  */
 export async function processPayrollBatch(
   recipients: PayrollRecipient[],
   employerAddress: string,
   totalAmount: string,
   zkeyUrl?: string,
-  wasmUrl?: string
+  wasmUrl?: string,
+  onProgress?: (stage: PayrollProgress) => void,
 ): Promise<{
   merkleRoot: string;
   nullifiers: string[];
   proofBytes: Uint8Array;
   publicSignals: string[];
 }> {
-  // Step 1: Build Merkle tree
+  onProgress?.(PAYROLL_STAGES.MERKLE_TREE);
+  // Yield so the browser can paint the progress text before CPU-heavy work
+  await yieldToEventLoop();
+
+  // Step 1: Build Merkle tree (now uses DYNAMIC depth — fixed from 2^20)
   const merkleTree = await buildMerkleTree(recipients, employerAddress);
+
+  onProgress?.(PAYROLL_STAGES.WITNESS_INPUT);
+  await yieldToEventLoop();
 
   // Step 2: Build witness input
   const witnessInput = await buildWitnessInput(
@@ -396,12 +465,18 @@ export async function processPayrollBatch(
     totalAmount
   );
 
+  onProgress?.(PAYROLL_STAGES.LOADING_SNARKJS);
+  await yieldToEventLoop();
+
   // Step 3: Generate proof
   const result = await generateProof(
     zkeyUrl || "/circuits/payroll_circuit.zkey",
     wasmUrl || "/circuits/payroll_circuit.wasm",
-    witnessInput
+    witnessInput,
+    onProgress,
   );
+
+  onProgress?.(PAYROLL_STAGES.DONE);
 
   return {
     merkleRoot: merkleTree.root,

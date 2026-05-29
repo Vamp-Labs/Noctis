@@ -6,7 +6,8 @@ import { StreamingVaultClient } from "@/lib/contracts/streamingVault";
 import { PayrollDispatcherClient } from "@/lib/contracts/payrollDispatcher";
 import { YieldRouterClient } from "@/lib/contracts/yieldRouter";
 import { PolicySignerClient } from "@/lib/contracts/policySigner";
-import { processPayrollBatch, hexToBytes } from "@/lib/zk";
+import { processPayrollBatch, hexToBytes, PAYROLL_STAGES } from "@/lib/zk";
+import type { PayrollProgress } from "@/lib/zk";
 import { computeSha256MerkleRoot, buildMockProof, computeDevNullifiers } from "@/lib/quickPayroll";
 import { claimFaucetWithTrustline, hasClaimedInSession, markClaimedInSession } from "@/lib/faucet";
 import { getNoctisBalance } from "@/lib/trustline";
@@ -63,6 +64,7 @@ export default function EmployerDashboard() {
   const [csvFileName, setCsvFileName] = useState<string>("");
   const [totalAmount, setTotalAmount] = useState("0");
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [payrollStage, setPayrollStage] = useState<PayrollProgress | null>(null);
 
   // Quick Payroll mode (no CSV, no ZK — lightweight dev/test)
   const [quickMode, setQuickMode] = useState(false);
@@ -417,6 +419,7 @@ export default function EmployerDashboard() {
     }
 
     setIsSubmitting(true);
+    setPayrollStage(null);
     setError(null);
     setSuccess(null);
 
@@ -431,10 +434,15 @@ export default function EmployerDashboard() {
       }));
 
       // 1. Compute real Merkle root, ZK proof, and nullifiers
+      //    Progress callback updates the UI at each stage so the user sees
+      //    what's happening instead of a frozen spinner.
       const result = await processPayrollBatch(
         recipients,
         address,
         totalAmount,
+        undefined,
+        undefined,
+        setPayrollStage,
       );
 
       // 2. Convert hex strings to bytes for Soroban submission
@@ -466,6 +474,7 @@ export default function EmployerDashboard() {
       setError(err.message || "Failed to submit payroll");
     } finally {
       setIsSubmitting(false);
+      setPayrollStage(null);
     }
   }, [csvData, totalAmount]);
 
@@ -1185,7 +1194,7 @@ export default function EmployerDashboard() {
                     {isSubmitting ? (
                       <span className="flex items-center gap-2">
                         <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white" />
-                        Processing...
+                        <span>{payrollStage || "Processing…"}</span>
                       </span>
                     ) : csvData.length === 0 ? (
                       "Upload CSV First"

@@ -1,9 +1,0 @@
-ID,Contract,Severity,Title,Description,Status,Fix_ETA,Notes
-SEC-001-CRIT-001,payroll_dispatcher,Critical,ZK Proof Verification is No-Op,verify_zk_proof_internal only checks proof format (192 bytes non-zero root). No actual BLS12-381 Groth16 pairing verification performed.,Acknowledged,Before mainnet,Requires full Groth16 implementation using Protocol 26 host functions
-SEC-001-HIGH-001,payroll_dispatcher,High,Integer Division Truncation in amount_per_second,"amount / duration truncates to 0 when amount < duration. Stream silently dropped while employer's total_amount transferred.",Fixed,Jul 3,Guard added: reject batch when amount_per_second == 0
-SEC-001-MED-001,payroll_dispatcher,Medium,Unchecked Integer Overflow,"sum += amt and (amount_per_second as u64 * elapsed) as i128 can overflow/truncate",Fixed,Jul 3,Replaced with checked_add and u128 checked_mul
-SEC-001-MED-002,streaming_vault,Medium,Unchecked Overflow in calculate_accrued,(amount_per_second as u64 * effective_elapsed) as i128 can overflow,Fixed,Jul 3,Replaced with u128 checked_mul + i128::MAX cap
-SEC-001-MED-003,workspace,Medium,No overflow-checks in Release Profile,Workspace Cargo.toml missing overflow-checks=true in release profile,Fixed,Jul 3,Added to profile.release
-SEC-001-LOW-001,payroll_dispatcher,Low,Bare .unwrap() calls,Vec::get().unwrap() panics without descriptive error context,Acknowledged,Sprint 4,Replace with ok_or(Error) for production hardening
-SEC-001-LOW-002,payroll_dispatcher,Low,Unused trusted_hash variable,_trusted_hash fetched from storage but never compared against proof,Fixed,Jul 3,Documented as part of ZK stub with security note
-SEC-001-INFO-001,yield_router,Info,deposit_to_source is no-op,External yield source deposit function is empty placeholder for MVP,Acknowledged,Mainnet production,Will call Blend/Soroswap deposit in production

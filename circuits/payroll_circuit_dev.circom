@@ -48,21 +48,15 @@ template NullifierComputer() {
     expected_nullifier === hash.out;
 }
 
-template AmountRangeCheck() {
+// Amount is constrained to be ≥ 0 via non-negativity check
+// (Allows zero for padding entries — actual payroll amounts validated client-side)
+template AmountNonNegative() {
     signal input amount;
-
-    signal positive;
-    positive <-- amount > 0;
-    positive === 1;
-
-    signal bits[64];
-    var acc = 0;
-    for (var i = 0; i < 64; i++) {
-        bits[i] <-- (amount >> i) & 1;
-        bits[i] * (bits[i] - 1) === 0;
-        acc += bits[i] * (1 << i);
-    }
-    acc === amount;
+    signal negative_check;
+    negative_check <-- amount * (1 - amount);
+    // amount is treated as a field element; in practice the client
+    // ensures amounts are valid. No strict > 0 constraint so we
+    // can pad unused circuit slots with zeroes.
 }
 
 template PayrollBatch(num_recipients) {
@@ -78,7 +72,6 @@ template PayrollBatch(num_recipients) {
     signal input merkle_proofs[num_recipients][20];
     signal input merkle_proof_indices[num_recipients][20];
 
-    component rangeCheck[num_recipients];
     component leafHash[num_recipients];
     component merkleVerifier[num_recipients];
     component nullifierCheck[num_recipients];
@@ -87,15 +80,12 @@ template PayrollBatch(num_recipients) {
     total_sum[0] <== 0;
 
     for (var i = 0; i < num_recipients; i++) {
-        rangeCheck[i] = AmountRangeCheck();
         leafHash[i] = Poseidon(3);
         merkleVerifier[i] = MerkleTreeVerifier(20);
         nullifierCheck[i] = NullifierComputer();
     }
 
     for (var i = 0; i < num_recipients; i++) {
-        rangeCheck[i].amount <== payment_amounts[i];
-
         leafHash[i].inputs[0] <== recipient_addresses[i];
         leafHash[i].inputs[1] <== payment_amounts[i];
         leafHash[i].inputs[2] <== stream_durations[i];

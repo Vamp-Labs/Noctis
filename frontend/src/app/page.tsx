@@ -41,18 +41,19 @@ export default function HomePage() {
         <main className="flex-1 flex flex-col items-center justify-center px-6 py-12">
           <div className="max-w-2xl text-center space-y-8">
             <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-primary/10 border border-primary/20 text-xs text-primary font-medium">
-              Stellar Testnet · Hackathon MVP
+              Stellar Soroban · Streaming Payroll
             </div>
 
             <h1 className="text-4xl md:text-5xl font-bold tracking-tight">
-              Privacy-First Payroll
+              Streaming Payroll
               <br />
-              <span className="text-primary">on Stellar</span>
+              <span className="text-primary">with Zero-Knowledge Privacy</span>
             </h1>
 
             <p className="text-lg text-text-muted max-w-lg mx-auto">
-              Run confidential batch payroll with zero-knowledge proofs.
-              Employees get per-second streaming payments they can claim anytime.
+              Process confidential batch payroll on Stellar Soroban.
+              Funds stream per-second to employees — they claim anytime.
+              One transaction replaces an entire pay cycle.
             </p>
 
             <div className="flex flex-col sm:flex-row gap-4 justify-center">
@@ -74,16 +75,17 @@ export default function HomePage() {
           {/* ─── Feature Cards ─────────────────────────── */}
           <div
             id="how-it-works"
-            className="grid grid-cols-1 md:grid-cols-3 gap-6 mt-24 max-w-4xl w-full"
+            className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mt-24 max-w-5xl w-full"
           >
             <div className="p-6 rounded-xl bg-surface-light border border-surface-lighter">
               <div className="w-10 h-10 rounded-lg bg-primary/20 flex items-center justify-center mb-4 text-lg">
                 🔒
               </div>
-              <h3 className="font-semibold mb-2">Zero-Knowledge Privacy</h3>
+              <h3 className="font-semibold mb-2">ZK Batch Privacy</h3>
               <p className="text-sm text-text-muted">
-                Payroll batches are verified with ZK proofs. Employee amounts
-                remain confidential on-chain.
+                Each payroll batch submits a zero-knowledge proof on-chain.
+                Employee identities and amounts stay confidential — only
+                a Merkle commitment is published.
               </p>
             </div>
 
@@ -91,21 +93,35 @@ export default function HomePage() {
               <div className="w-10 h-10 rounded-lg bg-secondary/20 flex items-center justify-center mb-4 text-lg">
                 ⚡
               </div>
-              <h3 className="font-semibold mb-2">Real-Time Streaming</h3>
+              <h3 className="font-semibold mb-2">Per-Second Streaming</h3>
               <p className="text-sm text-text-muted">
-                Payments stream per-second. Employees claim accrued salary at
-                any time — no pay cycles.
+                Funds stream from employer to employees every second, not
+                monthly or bi-weekly. Claim your accrued balance at any
+                time with a single transaction.
               </p>
             </div>
 
             <div className="p-6 rounded-xl bg-surface-light border border-surface-lighter">
               <div className="w-10 h-10 rounded-lg bg-accent/20 flex items-center justify-center mb-4 text-lg">
-                🏦
+                📦
               </div>
-              <h3 className="font-semibold mb-2">Yield-Bearing Capital</h3>
+              <h3 className="font-semibold mb-2">One-Tx Batch Payroll</h3>
               <p className="text-sm text-text-muted">
-                Idle payroll funds are routed to DeFi yield sources. Earnings
-                are split between employer, employees, and protocol.
+                Upload a CSV, review on-screen, and submit one transaction.
+                The smart contract creates individual streams for every
+                employee in the batch automatically.
+              </p>
+            </div>
+
+            <div className="p-6 rounded-xl bg-surface-light border border-surface-lighter">
+              <div className="w-10 h-10 rounded-lg bg-success/20 flex items-center justify-center mb-4 text-lg">
+                🪙
+              </div>
+              <h3 className="font-semibold mb-2">NOCTIS Token</h3>
+              <p className="text-sm text-text-muted">
+                Salary streams use the NOCTIS token on Stellar Testnet.
+                Claim tokens to your wallet, create a trustline once,
+                and receive payments instantly.
               </p>
             </div>
           </div>
@@ -126,7 +142,7 @@ export default function HomePage() {
 
       {/* ─── Footer ─────────────────────────────────── */}
       <footer className="px-6 py-4 border-t border-surface-lighter text-center text-xs text-text-muted">
-        Noctis · Built on Stellar Testnet · Hackathon MVP
+        Noctis · Stellar Soroban Protocol 26 · Hackathon MVP
       </footer>
     </div>
   );

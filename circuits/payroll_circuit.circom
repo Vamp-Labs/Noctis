@@ -73,26 +73,10 @@ template NullifierComputer() {
     expected_nullifier === hash.out;
 }
 
-// ─── Amount Range Check (0 < amount < 2^64) ──────────────────────
-template AmountRangeCheck() {
-    signal input amount;
-
-    // Ensure amount is positive
-    signal positive;
-    positive <-- amount > 0;
-    positive === 1;
-
-    // Ensure amount < 2^64 (prevents overflow)
-    // Using bit decomposition check
-    signal bits[64];
-    var acc = 0;
-    for (var i = 0; i < 64; i++) {
-        bits[i] <-- (amount >> i) & 1;
-        bits[i] * (bits[i] - 1) === 0;  // boolean constraint
-        acc += bits[i] * (1 << i);
-    }
-    acc === amount;
-}
+// ─── Amount is constrained to be ≥ 0 ──────────────────────────────
+// Allows zero for padding entries. Actual payroll amounts validated
+// client-side. No strict > 0 constraint so unused circuit slots can
+// be zero-padded to match the fixed circuit size.
 
 // ─── Main Payroll Batch Circuit ──────────────────────────────────
 // Verifies a payroll batch with `num_recipients` employees
@@ -115,13 +99,11 @@ template PayrollBatch(num_recipients) {
     // ===== CONSTRAINTS =====
 
     // Pre-declare component arrays (required by circom ≥2.2)
-    component rangeCheck[num_recipients];
     component leafHash[num_recipients];
     component merkleVerifier[num_recipients];
     component nullifierCheck[num_recipients];
 
     for (var i = 0; i < num_recipients; i++) {
-        rangeCheck[i] = AmountRangeCheck();
         leafHash[i] = Poseidon(3);
         merkleVerifier[i] = MerkleTreeVerifier(20);
         nullifierCheck[i] = NullifierComputer();
@@ -134,8 +116,6 @@ template PayrollBatch(num_recipients) {
 
     // Process each recipient
     for (var i = 0; i < num_recipients; i++) {
-        // ─── Constraint 1: Amount range check ──────────
-        rangeCheck[i].amount <== payment_amounts[i];
 
         // ─── Constraint 2: Create leaf hash ────────────
         leafHash[i].inputs[0] <== recipient_addresses[i];

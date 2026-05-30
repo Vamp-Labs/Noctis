@@ -55,18 +55,26 @@ export async function computeSha256MerkleRoot(
   }
 
   // Step 2: Build binary Merkle tree bottom-up
+  // Matches the contract's compute_merkle_root algorithm exactly:
+  //   leaf = SHA256(address_string.to_bytes() ++ (amount as u128).to_be_bytes())
+  //   internal = SHA256(left ++ right)
+  //   Odd leaves are propagated up, NOT duplicated
   while (leaves.length > 1) {
     const newLevel: Uint8Array[] = [];
     for (let i = 0; i < leaves.length; i += 2) {
       const left = leaves[i];
-      const right = i + 1 < leaves.length ? leaves[i + 1] : left;
-      const combined = new Uint8Array(left.length + right.length);
-      combined.set(left, 0);
-      combined.set(right, left.length);
-      const parentHash = await sha256Hash(combined);
-      newLevel.push(parentHash);
+      if (i + 1 < leaves.length) {
+        const right = leaves[i + 1];
+        const combined = new Uint8Array(left.length + right.length);
+        combined.set(left, 0);
+        combined.set(right, left.length);
+        const parentHash = await sha256Hash(combined);
+        newLevel.push(parentHash);
+      } else {
+        // Odd leaf — propagate up directly (contract behavior)
+        newLevel.push(left);
+      }
     }
-    // Replace old level with new
     leaves.length = 0;
     leaves.push(...newLevel);
   }

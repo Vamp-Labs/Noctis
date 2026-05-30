@@ -2,14 +2,16 @@
 
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useRouter } from "next/navigation";
-import { StreamingVaultClient } from "@/lib/contracts/streamingVault";
-import { PayrollDispatcherClient } from "@/lib/contracts/payrollDispatcher";
+import { PayrollDispatcherClient, type DispatcherStream, type StreamRef } from "@/lib/contracts/payrollDispatcher";
+import { hasTrustline, createTrustlineViaFreighter, getNoctisBalance } from "@/lib/trustline";
 import type { StreamData } from "@/types";
 import { useNotifications } from "@/components/NotificationToast";
 
 // ─── Types ───────────────────────────────────────────────────────
 interface StreamWithAccrued {
   stream: StreamData;
+  batchId: number;
+  streamIndex: number;
   accrued: string;
   isLoadingAccrued: boolean;
 }
@@ -55,6 +57,8 @@ export default function EmployeePortal() {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [streams, setStreams] = useState<StreamWithAccrued[]>([]);
+  const [needsTrustline, setNeedsTrustline] = useState(false);
+  const [isCreatingTrustline, setIsCreatingTrustline] = useState(false);
   const { addNotification, NotificationContainer } = useNotifications();
   const prevStreamCountRef = useRef(0);
   const isFirstLoadRef = useRef(true);
@@ -86,34 +90,60 @@ export default function EmployeePortal() {
       setError(null);
 
       try {
-        const vaultClient = new StreamingVaultClient();
-        const streamIds = await vaultClient.getEmployeeStreams(address);
+        // Streams are stored INSIDE the PayrollDispatcher contract via
+        // process_batch. Query the dispatcher directly (not StreamingVault).
+        const dispatcherClient = new PayrollDispatcherClient();
+        const streamRefs = await dispatcherClient.getEmployeeStreams(address);
 
         if (cancelled) return;
 
-        if (streamIds.length === 0) {
+        // Check NOCTIS trustline — needed for receiving tokens
+        const hasTrust = await hasTrustline(address);
+        if (!cancelled) setNeedsTrustline(!hasTrust);
+
+        if (streamRefs.length === 0) {
           setStreams([]);
           setIsLoading(false);
           return;
         }
 
-        // Load each stream's data and accrued amount
-        const streamPromises = streamIds.map(async (id) => {
-          const stream = await vaultClient.getStream(id);
+        // Load each stream's data and accrued amount from dispatcher
+        const streamPromises = streamRefs.map(async (ref) => {
+          const stream = await dispatcherClient.getStream(ref.batch_id, ref.stream_index);
           if (!stream) return null;
 
           let accrued = "0";
-          let isLoadingAccrued = true;
-
           try {
-            const accruedVal = await vaultClient.getAccruedAmount(id);
-            accrued = accruedVal || "0";
+            // Calculate accrued: amount_per_second * elapsed_seconds
+            const now = Math.floor(Date.now() / 1000);
+            const effectiveEnd = stream.stop_time < now ? stream.stop_time : now;
+            const elapsed = Math.max(0, effectiveEnd - stream.start_time);
+            accrued = (BigInt(stream.amount_per_second) * BigInt(elapsed)).toString();
           } catch {
             // keep 0
           }
-          isLoadingAccrued = false;
 
-          return { stream, accrued, isLoadingAccrued };
+          return {
+            stream: {
+              id: stream.id,
+              employer: stream.employer,
+              employee: stream.employee,
+              token: stream.token,
+              total_amount: stream.total_amount,
+              amount_per_second: stream.amount_per_second,
+              start_time: stream.start_time,
+              stop_time: stream.stop_time,
+              paused: false,
+              paused_at: 0,
+              total_paused_duration: 0,
+              total_claimed: stream.total_claimed,
+              refunded: !stream.active,
+            },
+            batchId: ref.batch_id,
+            streamIndex: ref.stream_index,
+            accrued,
+            isLoadingAccrued: false,
+          };
         });
 
         const results = (await Promise.all(streamPromises)).filter(
@@ -154,32 +184,67 @@ export default function EmployeePortal() {
 
   // Claim a single stream
   const handleClaim = useCallback(
-    async (streamId: number) => {
+    async (batchId: number, streamIndex: number) => {
       try {
         setError(null);
         const address = sessionStorage.getItem("noctis_wallet_address");
         if (!address) throw new Error("Wallet not connected");
 
-        const vaultClient = new StreamingVaultClient();
-        await vaultClient.claimStream(address, streamId);
+        // Ensure NOCTIS trustline exists before claiming
+        const hasTrust = await hasTrustline(address);
+        if (!hasTrust) {
+          setNeedsTrustline(true);
+          addNotification({
+            type: "warning",
+            title: "Trustline Required",
+            message: "Please create a NOCTIS trustline first to receive tokens.",
+          });
+          return;
+        }
+
+        const dispatcher = new PayrollDispatcherClient();
+        await dispatcher.claimStream(address, batchId, streamIndex);
 
         addNotification({
           type: "success",
           title: "Stream Claimed",
-          message: `Stream #${streamId} claimed successfully`,
+          message: `Stream claimed successfully`,
         });
 
-        // Refresh streams after claiming
-        const updatedStreams = await Promise.all(
-          streams.map(async (s) => {
-            if (s.stream.id === streamId) {
-              const accrued = await vaultClient.getAccruedAmount(streamId);
-              return { ...s, accrued: accrued || "0" };
-            }
-            return s;
+        // Refresh streams after claiming — re-fetch from dispatcher
+        const refs = await dispatcher.getEmployeeStreams(address);
+        const reloaded = await Promise.all(
+          refs.map(async (ref: StreamRef) => {
+            const st = await dispatcher.getStream(ref.batch_id, ref.stream_index);
+            if (!st) return null;
+            const now = Math.floor(Date.now() / 1000);
+            const effectiveEnd = st.stop_time < now ? st.stop_time : now;
+            const elapsed = Math.max(0, effectiveEnd - st.start_time);
+            const accrued = (BigInt(st.amount_per_second) * BigInt(elapsed)).toString();
+            return {
+              stream: {
+                id: st.id,
+                employer: st.employer,
+                employee: st.employee,
+                token: st.token,
+                total_amount: st.total_amount,
+                amount_per_second: st.amount_per_second,
+                start_time: st.start_time,
+                stop_time: st.stop_time,
+                paused: false,
+                paused_at: 0,
+                total_paused_duration: 0,
+                total_claimed: st.total_claimed,
+                refunded: !st.active,
+              },
+              batchId: ref.batch_id,
+              streamIndex: ref.stream_index,
+              accrued,
+              isLoadingAccrued: false,
+            } as StreamWithAccrued;
           })
         );
-        setStreams(updatedStreams);
+        setStreams(reloaded.filter((s): s is StreamWithAccrued => s !== null));
       } catch (err: any) {
         setError(err.message || "Failed to claim");
         addNotification({
@@ -189,7 +254,7 @@ export default function EmployeePortal() {
         });
       }
     },
-    [streams, addNotification]
+    [addNotification]
   );
 
   // Claim all — sum up all accrued amounts
@@ -207,21 +272,59 @@ export default function EmployeePortal() {
       const address = sessionStorage.getItem("noctis_wallet_address");
       if (!address) throw new Error("Wallet not connected");
 
-      const vaultClient = new StreamingVaultClient();
+      // Ensure NOCTIS trustline exists before claiming
+      const hasTrust = await hasTrustline(address);
+      if (!hasTrust) {
+        setNeedsTrustline(true);
+        addNotification({
+          type: "warning",
+          title: "Trustline Required",
+          message: "Please create a NOCTIS trustline first to receive tokens.",
+        });
+        return;
+      }
+
+      const dispatcher = new PayrollDispatcherClient();
       for (const s of streams) {
         if (Number(s.accrued) > 0) {
-          await vaultClient.claimStream(address, s.stream.id);
+          await dispatcher.claimStream(address, s.batchId, s.streamIndex);
         }
       }
 
       // Refresh all streams
-      const refreshed = await Promise.all(
-        streams.map(async (s) => {
-          const accrued = await vaultClient.getAccruedAmount(s.stream.id);
-          return { ...s, accrued: accrued || "0" };
+      const refs = await dispatcher.getEmployeeStreams(address);
+      const reloaded = await Promise.all(
+        refs.map(async (ref: StreamRef) => {
+          const st = await dispatcher.getStream(ref.batch_id, ref.stream_index);
+          if (!st) return null;
+          const now = Math.floor(Date.now() / 1000);
+          const effectiveEnd = st.stop_time < now ? st.stop_time : now;
+          const elapsed = Math.max(0, effectiveEnd - st.start_time);
+          const accrued = (BigInt(st.amount_per_second) * BigInt(elapsed)).toString();
+          return {
+            stream: {
+              id: st.id,
+              employer: st.employer,
+              employee: st.employee,
+              token: st.token,
+              total_amount: st.total_amount,
+              amount_per_second: st.amount_per_second,
+              start_time: st.start_time,
+              stop_time: st.stop_time,
+              paused: false,
+              paused_at: 0,
+              total_paused_duration: 0,
+              total_claimed: st.total_claimed,
+              refunded: !st.active,
+            },
+            batchId: ref.batch_id,
+            streamIndex: ref.stream_index,
+            accrued,
+            isLoadingAccrued: false,
+          } as StreamWithAccrued;
         })
       );
-      setStreams(refreshed);
+      setStreams(reloaded.filter((s): s is StreamWithAccrued => s !== null));
 
       addNotification({
         type: "success",
@@ -242,6 +345,49 @@ export default function EmployeePortal() {
   const totalRatePerSec = streams
     .filter((s) => !s.stream.refunded && !s.stream.paused)
     .reduce((sum, s) => sum + Number(s.stream.amount_per_second), 0);
+
+  // Handle NOCTIS trustline creation
+  const handleCreateTrustline = useCallback(async () => {
+    try {
+      setError(null);
+      setIsCreatingTrustline(true);
+      const address = sessionStorage.getItem("noctis_wallet_address");
+      if (!address) throw new Error("Wallet not connected");
+
+      addNotification({
+        type: "info",
+        title: "Creating Trustline",
+        message: "Freighter will open to sign a trustline transaction...",
+      });
+
+      const result = await createTrustlineViaFreighter(address);
+
+      if (result === "already_exists") {
+        addNotification({
+          type: "success",
+          title: "Trustline Exists",
+          message: "NOCTIS trustline is already set up.",
+        });
+      } else {
+        addNotification({
+          type: "success",
+          title: "Trustline Created",
+          message: "NOCTIS token trustline activated. You can now receive payments!",
+        });
+      }
+
+      setNeedsTrustline(false);
+    } catch (err: any) {
+      setError(err.message || "Failed to create trustline");
+      addNotification({
+        type: "error",
+        title: "Trustline Failed",
+        message: err.message || "Unable to create NOCTIS trustline",
+      });
+    } finally {
+      setIsCreatingTrustline(false);
+    }
+  }, [addNotification]);
 
   // Navigate back home
   const handleBack = useCallback(() => {
@@ -353,6 +499,29 @@ export default function EmployeePortal() {
           </div>
         )}
 
+        {/* ─── Trustline Warning ──────────────────────── */}
+        {needsTrustline && (
+          <div className="mb-6 p-4 rounded-xl bg-warning/10 border border-warning/30">
+            <div className="flex items-start gap-3">
+              <div className="text-warning text-lg shrink-0">⚠️</div>
+              <div className="flex-1">
+                <p className="font-semibold text-warning mb-1">NOCTIS Token Trustline Required</p>
+                <p className="text-sm text-text-muted mb-3">
+                  You need a trustline for the NOCTIS token to claim your streamed salary.
+                  This is a one-time setup.
+                </p>
+                <button
+                  onClick={handleCreateTrustline}
+                  disabled={isCreatingTrustline}
+                  className="px-4 py-2 rounded-lg bg-warning hover:bg-warning/80 text-white font-semibold text-sm transition-colors disabled:opacity-50"
+                >
+                  {isCreatingTrustline ? "Creating Trustline..." : "Create NOCTIS Trustline"}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* ─── Stream List ─────────────────────────── */}
         {!isLoading && streams.length > 0 && (
           <div>
@@ -459,7 +628,7 @@ export default function EmployeePortal() {
 
                       {/* Claim button */}
                       <button
-                        onClick={() => handleClaim(item.stream.id)}
+                        onClick={() => handleClaim(item.batchId, item.streamIndex)}
                         disabled={!canClaim}
                         className={`shrink-0 px-4 py-2 rounded-lg text-sm font-semibold transition-colors ${
                           canClaim

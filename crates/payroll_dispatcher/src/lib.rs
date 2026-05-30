@@ -91,6 +91,13 @@ pub struct PayrollBatch {
     pub stream_durations: Vec<u64>,
 }
 
+/// Reference to a stream (batch_id, stream_index) for the get_employee_streams return
+#[contracttype]
+pub struct StreamRef {
+    pub batch_id: u32,
+    pub stream_index: u32,
+}
+
 /// Tracks a stream internally within the dispatcher
 /// For MVP: streams are tracked inside the dispatcher rather than via cross-contract calls
 #[contracttype]
@@ -448,6 +455,41 @@ impl PayrollDispatcher {
             .set(&DataKey::Stream(batch_id, stream_index), &stream);
 
         Ok(actual_claim)
+    }
+
+    /// Get stream data by batch ID and stream index
+    pub fn get_stream(env: Env, batch_id: u32, stream_index: u32) -> Option<InternalStream> {
+        env.storage().instance()
+            .get(&DataKey::Stream(batch_id, stream_index))
+    }
+
+    /// Get all stream references for an employee by scanning batches
+    /// NOTE: This is O(batch_count * stream_count) — acceptable for MVP testnet.
+    /// Production should maintain an employee→streams index.
+    pub fn get_employee_streams(env: Env, employee: Address) -> Vec<StreamRef> {
+        let batch_count: u32 = env
+            .storage().instance()
+            .get(&DataKey::BatchCount)
+            .unwrap_or(0);
+        let mut result: Vec<StreamRef> = Vec::new(&env);
+        for batch_id in 1..=batch_count {
+            let meta: Option<BatchMetadata> = env
+                .storage().instance()
+                .get(&DataKey::Batch(batch_id));
+            if let Some(m) = meta {
+                for si in 1..=m.stream_count {
+                    let stream: Option<InternalStream> = env
+                        .storage().instance()
+                        .get(&DataKey::Stream(batch_id, si));
+                    if let Some(s) = stream {
+                        if s.employee == employee {
+                            result.push_back(StreamRef { batch_id, stream_index: si });
+                        }
+                    }
+                }
+            }
+        }
+        result
     }
 
     /// Internal ZK proof verification

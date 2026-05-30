@@ -18,15 +18,30 @@ export const server = new rpc.Server(STELLAR_NETWORK.rpcUrl, {
 });
 
 // ─── Sequence Number Cache ───────────────────────────────────────
-// Avoid fetching the same account multiple times in a single operation
 const accountCache = new Map<string, Account>();
 
 async function getCachedAccount(address: string): Promise<Account> {
   const cached = accountCache.get(address);
   if (cached) return cached;
-  const account = await server.getAccount(address);
-  accountCache.set(address, account);
-  return account;
+  try {
+    const account = await server.getAccount(address);
+    accountCache.set(address, account);
+    return account;
+  } catch (err: any) {
+    // If account doesn't exist on testnet, fund via Friendbot and retry
+    if (err?.message?.includes?.("not found") || err?.message?.includes?.("does not exist")) {
+      console.log(`Account ${address.slice(0, 8)}... not found — funding via Friendbot...`);
+      const funded = await fundTestnetAccount(address);
+      if (funded) {
+        // Retry after funding (Friendbot creates the account)
+        await new Promise(r => setTimeout(r, 3000)); // wait for Friendbot tx to settle
+        const account = await server.getAccount(address);
+        accountCache.set(address, account);
+        return account;
+      }
+    }
+    throw err;
+  }
 }
 
 export function clearAccountCache() {
@@ -131,7 +146,19 @@ export class ContractClient {
     const sendResult = await server.sendTransaction(tx);
 
     if (sendResult.status === "ERROR") {
-      throw new Error(`Transaction failed: ${sendResult.errorResult?.result().toString()}`);
+      const errResult = sendResult.errorResult;
+      let detail = "unknown error";
+      try {
+        const resultObj = errResult?.result();
+        if (resultObj) {
+          const switchName = resultObj.switch()?.name || "?";
+          const switchValue = resultObj.value();
+          detail = `${switchName}: ${JSON.stringify(switchValue)}`;
+        }
+      } catch (e) {
+        detail = `[cannot decode XDR]`;
+      }
+      throw new Error(`Transaction failed: ${detail}`);
     }
 
     return sendResult;
@@ -218,7 +245,19 @@ export class ContractClient {
     const sendResult = await server.sendTransaction(signedTx);
 
     if (sendResult.status === "ERROR") {
-      throw new Error(`Transaction failed: ${sendResult.errorResult?.result().toString()}`);
+      const errResult = sendResult.errorResult;
+      let detail = "unknown error";
+      try {
+        const resultObj = errResult?.result();
+        if (resultObj) {
+          const switchName = resultObj.switch()?.name || "?";
+          const switchValue = resultObj.value();
+          detail = `${switchName}: ${JSON.stringify(switchValue)}`;
+        }
+      } catch (e) {
+        detail = `[cannot decode: ${errResult?.toXDR('base64')?.substring(0, 100)}]`;
+      }
+      throw new Error(`Transaction failed: ${detail}`);
     }
 
     // 6. Poll for completion

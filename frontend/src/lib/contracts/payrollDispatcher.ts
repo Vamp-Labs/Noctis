@@ -2,6 +2,26 @@ import { ContractClient, addressToScVal, i128ToScVal, u32ToScVal, u64ToScVal, by
 import { CONTRACT_ADDRESSES } from "@/types";
 import type { BatchMetadata } from "@/types";
 
+/** Stream data returned by the PayrollDispatcher's get_stream function */
+export interface DispatcherStream {
+  id: number;
+  employer: string;
+  employee: string;
+  token: string;
+  total_amount: string;
+  amount_per_second: string;
+  start_time: number;
+  stop_time: number;
+  total_claimed: string;
+  active: boolean;
+}
+
+/** Stream reference (batch_id, stream_index) returned by get_employee_streams */
+export interface StreamRef {
+  batch_id: number;
+  stream_index: number;
+}
+
 export class PayrollDispatcherClient extends ContractClient {
   constructor() {
     super(CONTRACT_ADDRESSES.payroll_dispatcher);
@@ -25,6 +45,42 @@ export class PayrollDispatcherClient extends ContractClient {
       };
     } catch {
       return null;
+    }
+  }
+
+  /** Get stream data by batch ID and stream index */
+  async getStream(batchId: number, streamIndex: number): Promise<DispatcherStream | null> {
+    try {
+      const result = await this.simulate<any>("get_stream", u32ToScVal(batchId), u32ToScVal(streamIndex));
+      if (!result) return null;
+      return {
+        id: result.id,
+        employer: result.employer,
+        employee: result.employee,
+        token: result.token,
+        total_amount: result.total_amount?.toString() || "0",
+        amount_per_second: result.amount_per_second?.toString() || "0",
+        start_time: Number(result.start_time),
+        stop_time: Number(result.stop_time),
+        total_claimed: result.total_claimed?.toString() || "0",
+        active: result.active,
+      };
+    } catch {
+      return null;
+    }
+  }
+
+  /** Get all stream references for an employee (scans batches) */
+  async getEmployeeStreams(employeeAddress: string): Promise<StreamRef[]> {
+    try {
+      const result = await this.simulate<any[]>("get_employee_streams", addressToScVal(employeeAddress));
+      if (!result) return [];
+      return result.map((r: any) => ({
+        batch_id: Number(r.batch_id),
+        stream_index: Number(r.stream_index),
+      }));
+    } catch {
+      return [];
     }
   }
 

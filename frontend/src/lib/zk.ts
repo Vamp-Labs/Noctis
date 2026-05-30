@@ -317,19 +317,15 @@ export async function generateProof(
   onProgress?.(PAYROLL_STAGES.GENERATING_WITNESS);
   await yieldToEventLoop();
 
-  // Generate witness (WASM — blocks the main thread for 1-5s)
-  const { witness, wtnsBytes } = await snarkjs.wtns.calculate(
+  // Full prove: witness calculation + Groth16 proof in one shot.
+  // snarkjs v0.7.6: groth16.fullProve(input, wasmFile, zkeyFile) handles all
+  // in-memory witness passing correctly. The low-level two-step
+  // (wtns.calculate → groth16.prove) requires a {type:"mem"} object passed
+  // as 3rd arg and is error-prone — fullProve does it right.
+  const { proof, publicSignals } = await snarkjs.groth16.fullProve(
     witnessInput,
-    wasmUrl
-  );
-
-  onProgress?.(PAYROLL_STAGES.PROVING);
-  await yieldToEventLoop();
-
-  // Generate proof (WASM — blocks the main thread for 5-30s depending on circuit)
-  const { proof, publicSignals } = await snarkjs.groth16.prove(
+    wasmUrl,
     zkeyUrl,
-    witness
   );
 
   // Serialize proof to 384 bytes: G1(96) + G2(192) + G1(96)

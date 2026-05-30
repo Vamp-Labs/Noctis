@@ -31,3 +31,12 @@ node_modules/
 # Next.js build output
 frontend/out/
 frontend/.next/
+
+# Other unnecessary folders
+.planning/
+dist/
+build/
+.turbo/
+.cache/
+logs/
+tmp/

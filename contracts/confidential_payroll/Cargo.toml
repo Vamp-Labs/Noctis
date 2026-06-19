@@ -11,7 +11,6 @@ testutils = ["soroban-sdk/testutils"]
 
 [dependencies]
 soroban-sdk = { version = "21.0.0" }
-ultrahonk-verifier = { git = "https://github.com/indextree/ultrahonk_soroban_contract" }
 
 [dev-dependencies]
 soroban-sdk = { version = "21.0.0", features = ["testutils"] }

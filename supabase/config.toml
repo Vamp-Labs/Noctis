@@ -1,0 +1,19 @@
+[api]
+enabled = true
+port = 54321
+
+[db]
+enabled = true
+
+[db.enable]
+extensions = ["pg_cron"]
+
+[edge_functions]
+enabled = true
+verify_jwt = false
+
+[analytics]
+enabled = false
+
+[realtime]
+enabled = true

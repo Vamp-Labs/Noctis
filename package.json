@@ -1,0 +1,29 @@
+{
+  "name": "zk-sdp",
+  "private": true,
+  "description": "Zero-Knowledge Stellar Disbursement Protocol — Confidential Payroll",
+  "scripts": {
+    "dev": "turbo dev",
+    "build": "turbo build",
+    "test": "turbo test",
+    "lint": "turbo lint",
+    "clean": "turbo clean",
+    "format": "prettier --write \"**/*.{ts,tsx,md}\"",
+    "circuit:compile": "cd circuits/payroll_withdrawal && nargo compile",
+    "circuit:info": "cd circuits/payroll_withdrawal && nargo info",
+    "contract:build": "cd contracts/confidential_payroll && cargo build --target wasm32v1-none --release",
+    "supabase:start": "supabase start",
+    "supabase:stop": "supabase stop",
+    "supabase:deploy:fns": "supabase functions deploy event-indexer --no-verify-jwt && supabase functions deploy batch-status --no-verify-jwt",
+    "frontend:deploy": "cd frontend && npx wrangler pages deploy .vercel/output/static --project-name=zk-sdp"
+  },
+  "devDependencies": {
+    "turbo": "^2.0.0",
+    "prettier": "^3.0.0",
+    "typescript": "^5.4.0"
+  },
+  "packageManager": "pnpm@9.0.0",
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}

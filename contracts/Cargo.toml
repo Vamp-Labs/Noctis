@@ -1,0 +1,3 @@
+[workspace]
+members = ["confidential_payroll"]
+resolver = "2"

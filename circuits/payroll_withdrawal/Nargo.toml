@@ -1,0 +1,8 @@
+[package]
+name = "payroll_withdrawal"
+type = "bin"
+authors = ["ArbaLabs"]
+compiler_version = ">=0.36.0"
+
+[dependencies]
+std = { path = "../../node_modules/@noir-lang/noir_stdlib" }
